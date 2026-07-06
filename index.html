@@ -393,7 +393,232 @@ function Dashboard({user,showToast,onOpen}){
   );
 }
 
-/* ================= 과제 상세 페이지 (Phase 2-1: 탭 뼈대) ================= */
+/* ================= 연차 수정/추가 모달 ================= */
+function YearModal({year,onClose,onSave}){
+  const isNew = !year;
+  const [f,setF] = useState({
+    year_label: year?.year_label||'',
+    start_date: year?.start_date||'',
+    end_date:   year?.end_date||'',
+    govt_budget: year?.govt_budget||'',
+    cash_budget: year?.cash_budget||'',
+    kind_budget: year?.kind_budget||'',
+    carry_over:  year?.carry_over||'',
+    note:        year?.note||'',
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const total = n(f.govt_budget)+n(f.cash_budget)+n(f.kind_budget);
+
+  async function go(){
+    if(!f.year_label.trim()){ setErr('연차명을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      year_label:f.year_label.trim(),
+      start_date:f.start_date||null, end_date:f.end_date||null,
+      govt_budget:n(f.govt_budget), cash_budget:n(f.cash_budget), kind_budget:n(f.kind_budget),
+      total_budget:total, carry_over:n(f.carry_over), note:f.note.trim()||null,
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:560,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'연차 추가':'연차 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:13}}>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">연차명</label>
+            <input value={f.year_label} onChange={e=>set('year_label',e.target.value)} placeholder="예: 1차년도"/></div>
+          <div><label className="form-label">시작일</label>
+            <input type="date" value={f.start_date} onChange={e=>set('start_date',e.target.value)}/></div>
+          <div><label className="form-label">종료일</label>
+            <input type="date" value={f.end_date} onChange={e=>set('end_date',e.target.value)}/></div>
+          <div><label className="form-label">정부출연금</label>
+            <input inputMode="numeric" value={f.govt_budget} onChange={e=>set('govt_budget',e.target.value)} placeholder="0"/></div>
+          <div><label className="form-label">자부담 현금</label>
+            <input inputMode="numeric" value={f.cash_budget} onChange={e=>set('cash_budget',e.target.value)} placeholder="0"/></div>
+          <div><label className="form-label">자부담 현물</label>
+            <input inputMode="numeric" value={f.kind_budget} onChange={e=>set('kind_budget',e.target.value)} placeholder="0"/></div>
+          <div><label className="form-label">예산합계 (자동)</label>
+            <div style={{padding:'9px 12px',background:'rgba(249,115,22,.08)',borderRadius:8,
+              border:'1px solid rgba(249,115,22,.2)',fontWeight:800,color:'var(--brand)'}}>{fmt(total)}원</div></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">이월금</label>
+            <input inputMode="numeric" value={f.carry_over} onChange={e=>set('carry_over',e.target.value)} placeholder="전 연차에서 이월된 금액 (없으면 0)"/></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">비고</label>
+            <textarea value={f.note} onChange={e=>set('note',e.target.value)} rows={2} placeholder="특이사항"/></div>
+        </div>
+        {err && <div style={{marginTop:14,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:18}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 연차 관리 (등록·설정 탭 내용 1) ================= */
+function YearManager({user,proj,showToast}){
+  const [rows,setRows] = useState(null);
+  const [modal,setModal] = useState(null); // null | 'new' | 연차객체
+
+  async function load(){
+    const {data} = await sb.from('project_years').select('*').eq('project_id',proj.id);
+    const arr = (data||[]).sort((a,b)=>(a.year_no||0)-(b.year_no||0)
+      || String(a.start_date||'').localeCompare(String(b.start_date||'')));
+    setRows(arr);
+  }
+  useEffect(()=>{ load(); },[proj.id]);
+
+  // 협약기간 기준 12개월 단위 연차 계산
+  function genYears(){
+    const s = proj.period_start, e = proj.period_end;
+    if(!s||!e){ showToast('먼저 협약 시작일/종료일을 입력하세요','err'); return null; }
+    const iso = d => d.toISOString().slice(0,10);
+    const sd=new Date(s), ed=new Date(e);
+    if(sd>ed){ showToast('협약 종료일이 시작일보다 빠릅니다','err'); return null; }
+    const out=[]; let cur=new Date(sd); let no=1;
+    while(cur<=ed && no<=15){
+      let ye=new Date(cur); ye.setFullYear(ye.getFullYear()+1); ye.setDate(ye.getDate()-1);
+      if(ye>ed) ye=new Date(ed);
+      out.push({ project_id:proj.id, year_no:no, year_label:no+'차년도',
+        start_date:iso(cur), end_date:iso(ye),
+        govt_budget:0, cash_budget:0, kind_budget:0, total_budget:0, carry_over:0 });
+      let nx=new Date(ye); nx.setDate(nx.getDate()+1); cur=nx; no++;
+    }
+    return out;
+  }
+
+  async function autoGen(){
+    const gen = genYears();
+    if(!gen) return;
+    if(rows && rows.length>0){
+      if(!confirm(`이미 연차가 ${rows.length}개 있습니다.\n모두 삭제하고 협약기간 기준으로 다시 생성할까요?`)) return;
+      await sb.from('project_years').delete().eq('project_id',proj.id);
+    }
+    const {error} = await sb.from('project_years').insert(gen);
+    if(error){ showToast('생성 실패: '+error.message,'err'); return; }
+    audit(user,'GEN_YEARS',proj.id, gen.length+'개 연차 생성');
+    showToast(gen.length+'개 연차가 생성되었습니다'); load();
+  }
+
+  async function saveYear(payload){
+    if(modal==='new'){
+      const year_no = (rows?.length||0)+1;
+      const {error} = await sb.from('project_years').insert({...payload, project_id:proj.id, year_no});
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('연차가 추가되었습니다');
+    }else{
+      const {error} = await sb.from('project_years').update(payload).eq('id',modal.id);
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('수정되었습니다');
+    }
+    setModal(null); load();
+  }
+
+  async function delYear(y){
+    if(!confirm(`"${y.year_label}"을(를) 삭제하시겠습니까?`)) return;
+    const {error} = await sb.from('project_years').delete().eq('id',y.id);
+    if(error){ showToast('삭제 실패: '+error.message,'err'); return; }
+    showToast('삭제되었습니다'); load();
+  }
+
+  const sum = useMemo(()=>{
+    const list=rows||[];
+    return {
+      govt:list.reduce((s,y)=>s+n(y.govt_budget),0),
+      cash:list.reduce((s,y)=>s+n(y.cash_budget),0),
+      kind:list.reduce((s,y)=>s+n(y.kind_budget),0),
+    };
+  },[rows]);
+
+  return (
+    <div>
+      {/* 안내 + 액션 */}
+      <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+        justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+        <div style={{fontSize:13,color:'var(--text-sub)'}}>
+          <i className="ti ti-info-circle" style={{color:'var(--brand)',marginRight:6}}/>
+          협약기간 <b>{proj.period_start||'—'} ~ {proj.period_end||'—'}</b> 기준으로 연차를 자동 생성할 수 있습니다.
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-ghost btn-sm" onClick={autoGen}><i className="ti ti-wand"/> 연차 자동 생성</button>
+          <button className="btn btn-brand btn-sm" onClick={()=>setModal('new')}><i className="ti ti-plus"/> 연차 추가</button>
+        </div>
+      </div>
+
+      {/* 연차별 합계 */}
+      {rows && rows.length>0 && (
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+          <div className="card" style={{padding:'14px 16px'}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>정부출연금 합계</div>
+            <div style={{fontSize:17,fontWeight:800}}>{fmt(sum.govt)}원</div></div>
+          <div className="card" style={{padding:'14px 16px'}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>자부담 현금 합계</div>
+            <div style={{fontSize:17,fontWeight:800}}>{fmt(sum.cash)}원</div></div>
+          <div className="card" style={{padding:'14px 16px'}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>자부담 현물 합계</div>
+            <div style={{fontSize:17,fontWeight:800}}>{fmt(sum.kind)}원</div></div>
+        </div>
+      )}
+
+      {/* 연차 표 */}
+      <div className="card" style={{overflow:'hidden'}}>
+        {rows===null ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : rows.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-calendar-off" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>등록된 연차가 없습니다</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>"연차 자동 생성" 또는 "연차 추가"로 시작하세요.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr>
+                <th>연차</th><th>기간</th>
+                <th style={{textAlign:'right'}}>정부출연금</th>
+                <th style={{textAlign:'right'}}>자부담현금</th>
+                <th style={{textAlign:'right'}}>자부담현물</th>
+                <th style={{textAlign:'right'}}>예산합계</th>
+                <th style={{textAlign:'right'}}>이월금</th>
+                <th style={{textAlign:'center'}}>관리</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(y=>(
+                  <tr key={y.id}>
+                    <td><span className="badge b-준비" style={{fontWeight:700}}>{y.year_label}</span></td>
+                    <td style={{fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>{y.start_date||'—'} ~ {y.end_date||'—'}</td>
+                    <td style={{textAlign:'right'}}>{fmt(y.govt_budget)}</td>
+                    <td style={{textAlign:'right'}}>{fmt(y.cash_budget)}</td>
+                    <td style={{textAlign:'right'}}>{fmt(y.kind_budget)}</td>
+                    <td style={{textAlign:'right',fontWeight:700}}>{fmt(y.total_budget)}</td>
+                    <td style={{textAlign:'right',color:'var(--text-sub)'}}>{fmt(y.carry_over)}</td>
+                    <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                      <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal(y)}><i className="ti ti-pencil"/></button>
+                      <button className="btn btn-ghost btn-sm" onClick={()=>delYear(y)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modal && (
+        <YearModal year={modal==='new'?null:modal}
+          onClose={()=>setModal(null)} onSave={saveYear}/>
+      )}
+    </div>
+  );
+}
+
+/* ================= 과제 상세 페이지 ================= */
 function ProjectDetail({user,project,onBack,showToast}){
   const [proj,setProj] = useState(project);
   const [ptab,setPtab] = useState('setup'); // prepare/setup/execute/settle
@@ -464,7 +689,7 @@ function ProjectDetail({user,project,onBack,showToast}){
 
       {/* 탭 내용 (Phase 2-1은 뼈대만; 다음 단계에서 채움) */}
       {ptab==='prepare' && placeholder('Phase 1 · 준비','과제 준비 단계 정보가 여기 들어갑니다.')}
-      {ptab==='setup'   && placeholder('Phase 2 · 등록·설정','다음 단계에서 사업비 계산기 · 연차 관리 · 세부 비목이 추가됩니다.')}
+      {ptab==='setup'   && <YearManager user={user} proj={proj} showToast={showToast}/>}
       {ptab==='execute' && placeholder('Phase 3 · 수행·집행','집행 입력 · 인건비 · 현물이 추가됩니다.')}
       {ptab==='settle'  && placeholder('Phase 4 · 정산·보고','연차별 집행률 · 잔액 · 증빙 점검 · 엑셀 내보내기가 추가됩니다.')}
 
