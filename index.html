@@ -18,7 +18,7 @@
     --brand:#f97316; --brand-dark:#ea580c;
     --bg:#1a2334; --card:#222d42; --border:#33415a;
     --input:#1c2638; --card-2:#1c2638; --row-hover:#283449; --highlight:#26314a;
-    --text:#eef2f8; --text-sub:#aab6c8; --text-muted:#8f9cb0;
+    --text:#f2f6fb; --text-sub:#cfd8e6; --text-muted:#a9b4c4;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Inter',-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
@@ -41,7 +41,7 @@
   .sidebar-item:hover{background:rgba(255,255,255,.10);color:#ffffff}
   .sidebar-item.active{background:rgba(249,115,22,.15);color:var(--brand)}
   .sidebar-item i{font-size:17px}
-  .grp-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;
+  .grp-label{font-size:10px;font-weight:700;color:#aeb9c9;text-transform:uppercase;
     letter-spacing:.08em;padding:14px 12px 6px}
   .spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--brand);
     border-radius:50%;animation:spin .7s linear infinite}
@@ -74,6 +74,7 @@
     border-bottom:2px solid transparent;margin-right:26px;white-space:nowrap;display:inline-flex;align-items:center;gap:7px}
   .ptab.active{color:var(--brand);border-bottom-color:var(--brand)}
   .ptab:hover{color:var(--text-sub)}
+  .tbl-sticky thead th{position:sticky;top:0;z-index:5;background:var(--card-2)}
 </style>
 </head>
 <body>
@@ -143,7 +144,7 @@ function Sidebar({user,onLogout,tab,setTab}){
     <aside style={{width:220,background:'var(--navy)',display:'flex',flexDirection:'column',flexShrink:0,padding:'18px 12px'}}>
       <div style={{padding:'6px 8px 16px',borderBottom:'1px solid rgba(255,255,255,.08)'}}>
         <div style={{fontSize:16,fontWeight:800,color:'var(--brand)',letterSpacing:'-.02em'}}>CRESCOM</div>
-        <div style={{fontSize:10,color:'#64748b',marginTop:1}}>정부과제 관리</div>
+        <div style={{fontSize:10,color:'#aeb9c9',marginTop:1}}>정부과제 관리</div>
       </div>
       <div className="grp-label">메인</div>
       <div className={"sidebar-item"+(tab==='dashboard'?' active':'')} onClick={()=>setTab('dashboard')}>
@@ -269,6 +270,7 @@ function Dashboard({user,showToast,onOpen}){
   const [err,setErr]   = useState('');
   const [modal,setModal] = useState(null);
   const [sort,setSort] = useState({key:'created_at',dir:'desc'});
+  const [view,setView] = useState('table'); // table | card
 
   async function load(){
     setErr('');
@@ -315,7 +317,19 @@ function Dashboard({user,showToast,onOpen}){
           <h1 style={{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}}>전체 현황판</h1>
           <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>{new Date().getFullYear()}년 정부과제 관리</div>
         </div>
-        <button className="btn btn-brand" onClick={()=>setModal('new')}><i className="ti ti-plus"/> 신규 과제 등록</button>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{display:'flex',background:'var(--card-2)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+            <button onClick={()=>setView('table')} title="표 보기"
+              style={{padding:'8px 12px',border:'none',cursor:'pointer',fontSize:13,
+                background:view==='table'?'var(--brand)':'transparent',color:view==='table'?'#fff':'var(--text-sub)'}}>
+              <i className="ti ti-list"/></button>
+            <button onClick={()=>setView('card')} title="카드 보기"
+              style={{padding:'8px 12px',border:'none',cursor:'pointer',fontSize:13,
+                background:view==='card'?'var(--brand)':'transparent',color:view==='card'?'#fff':'var(--text-sub)'}}>
+              <i className="ti ti-layout-grid"/></button>
+          </div>
+          <button className="btn btn-brand" onClick={()=>setModal('new')}><i className="ti ti-plus"/> 신규 과제 등록</button>
+        </div>
       </div>
 
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:22}}>
@@ -344,9 +358,44 @@ function Dashboard({user,showToast,onOpen}){
             <div style={{fontWeight:700,marginTop:12}}>아직 등록된 과제가 없습니다</div>
             <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>우측 상단 "신규 과제 등록"으로 시작하세요.</div>
           </div>
+        ) : view==='card' ? (
+          <div style={{padding:16,display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(310px,1fr))',gap:14}}>
+            {sorted.map(p=>(
+              <div key={p.id} style={{background:'var(--card-2)',border:'1px solid var(--border)',borderRadius:12,
+                padding:16,display:'flex',flexDirection:'column',gap:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8}}>
+                  <div className="row-click" onClick={()=>onOpen(p)} style={{flex:1}}>
+                    <div style={{fontWeight:700,color:'var(--brand)',fontSize:15,lineHeight:1.3}}>{p.name}</div>
+                    {p.project_code && <span className="badge b-준비" style={{marginTop:6,fontSize:10}}>{p.project_code}</span>}
+                  </div>
+                  <span className={"badge b-"+(p.status||'준비')}>{p.status||'준비'}</span>
+                </div>
+                {p.program && <div style={{fontSize:12,color:'var(--text-sub)',lineHeight:1.4}}>{p.program}</div>}
+                <div style={{borderTop:'1px solid var(--border)',paddingTop:10,display:'flex',flexDirection:'column',gap:6}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
+                    <span style={{color:'var(--text-muted)'}}>주관기관</span><span style={{color:'var(--text-sub)'}}>{p.agency||'—'}</span></div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}>
+                    <span style={{color:'var(--text-muted)'}}>협약기간</span><span style={{color:'var(--text-sub)'}}>{p.period_start||'—'} ~ {p.period_end||'—'}</span></div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,alignItems:'center'}}>
+                    <span style={{color:'var(--text-muted)'}}>총사업비</span>
+                    <span style={{fontWeight:700,color:'var(--text)',fontSize:14}}>{p.total_budget?fmt(p.total_budget)+'원':'—'}</span></div>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:2}}>
+                  <div style={{display:'flex',gap:8}}>
+                    {p.evidence_folder_url && <a href={p.evidence_folder_url} target="_blank" title="증빙 폴더" style={{color:'var(--brand)'}}><i className="ti ti-folder"/></a>}
+                    {p.manage_folder_url && <a href={p.manage_folder_url} target="_blank" title="과제 관리 폴더" style={{color:'#60a5fa'}}><i className="ti ti-folder-cog"/></a>}
+                  </div>
+                  <div style={{display:'flex',gap:5}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>setModal(p)}><i className="ti ti-pencil"/></button>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>del(p)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <div style={{overflowX:'auto'}}>
-            <table className="tbl">
+          <div style={{overflow:'auto',maxHeight:'calc(100vh - 300px)'}}>
+            <table className="tbl tbl-sticky">
               <thead><tr>
                 <Th k="name">과제명</Th>
                 <Th k="agency">주관기관</Th>
@@ -2346,8 +2395,8 @@ function EmployeeView({user,showToast}){
             {!q && <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>"직원 추가"로 시작하세요.</div>}
           </div>
         ) : (
-          <div style={{overflowX:'auto'}}>
-            <table className="tbl">
+          <div style={{overflow:'auto',maxHeight:'calc(100vh - 260px)'}}>
+            <table className="tbl tbl-sticky">
               <thead><tr>
                 <th>이름</th><th>직급</th><th>부서</th><th style={{textAlign:'center'}}>구분</th>
                 <th style={{textAlign:'right'}}>월 인건비</th><th>이메일</th>
@@ -2441,10 +2490,10 @@ function StaffMatrixView({user,showToast}){
   const calcCost = (salary,ratePct) => Math.floor((Number(salary)||0)*(ratePct/100)/1000)*1000;
 
   const getSt = total => {
-    if(total>100) return {color:'#ef4444',bg:'rgba(239,68,68,.10)',text:'초과',badge:'b-탈락'};
-    if(total>=80) return {color:'#d97706',bg:'rgba(245,158,11,.10)',text:'주의',badge:'b-신청'};
-    if(total>0)   return {color:'#059669',bg:'rgba(16,185,129,.10)',text:'정상',badge:'b-수행'};
-    return {color:'#94a3b8',bg:'',text:'미배부',badge:'b-준비'};
+    if(total>100) return {color:'#f87171',bg:'rgba(239,68,68,.16)',text:'초과',badge:'b-탈락'};
+    if(total>=80) return {color:'#fbbf24',bg:'rgba(245,158,11,.16)',text:'주의',badge:'b-신청'};
+    if(total>0)   return {color:'#34d399',bg:'rgba(16,185,129,.16)',text:'정상',badge:'b-수행'};
+    return {color:'#a9b4c4',bg:'',text:'미배부',badge:'b-준비'};
   };
 
   const overList = useMemo(()=>people.filter(p=>[0,1,2,3,4,5,6,7,8,9,10,11].some(mi=>monthTotal(p,mi)>100)).map(p=>p.emp.name),
@@ -2471,7 +2520,7 @@ function StaffMatrixView({user,showToast}){
 
       {/* 범례 */}
       <div style={{display:'flex',gap:14,alignItems:'center',fontSize:11,color:'var(--text-muted)',flexWrap:'wrap',marginBottom:12}}>
-        {[['#ef4444','초과(100%↑)'],['#d97706','주의(80%↑)'],['#059669','정상'],['#94a3b8','미배부']].map(([c,t])=>(
+        {[['#f87171','초과(100%↑)'],['#fbbf24','주의(80%↑)'],['#34d399','정상'],['#a9b4c4','미배부']].map(([c,t])=>(
           <span key={t}><span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:c,marginRight:5,verticalAlign:'middle'}}/>{t}</span>
         ))}
       </div>
