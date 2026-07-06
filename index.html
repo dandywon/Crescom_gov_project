@@ -155,6 +155,9 @@ function Sidebar({user,onLogout,tab,setTab}){
       <div className={"sidebar-item"+(tab==='matrix'?' active':'')} onClick={()=>setTab('matrix')}>
         <i className="ti ti-layout-grid"/> 참여율 현황
       </div>
+      <div className={"sidebar-item"+(tab==='audit'?' active':'')} onClick={()=>setTab('audit')}>
+        <i className="ti ti-history"/> 감사 로그
+      </div>
       <div style={{marginTop:'auto',padding:'14px 8px 0',borderTop:'1px solid rgba(255,255,255,.08)'}}>
         <div style={{fontSize:11,color:'#cbd5e1',marginBottom:8,wordBreak:'break-all'}}>{user.email}</div>
         <button className="btn btn-ghost" style={{width:'100%',fontSize:12,padding:'7px',justifyContent:'center'}} onClick={onLogout}>로그아웃</button>
@@ -2530,6 +2533,80 @@ function StaffMatrixView({user,showToast}){
   );
 }
 
+/* ================= 감사 로그 조회 (공통) ================= */
+function AuditLogView({user,showToast}){
+  const [rows,setRows] = useState(null);
+  const [q,setQ] = useState('');
+
+  async function load(){
+    const {data} = await sb.from('audit_log').select('*').order('created_at',{ascending:false}).limit(500);
+    setRows(data||[]);
+  }
+  useEffect(()=>{ load(); },[]);
+
+  const ACTION_LABEL = {
+    INSERT:'등록', UPDATE:'수정', DELETE:'삭제',
+    GEN_YEARS:'연차생성', BUDGET_CALC:'사업비계산', AUTO_LABOR:'인건비계상', EXPORT_EXCEL:'엑셀출력',
+  };
+  const filtered = useMemo(()=>{
+    const list=rows||[];
+    if(!q.trim()) return list;
+    const s=q.trim().toLowerCase();
+    return list.filter(r=>[r.user_email,r.action,r.table_name,r.detail].some(v=>String(v||'').toLowerCase().includes(s)));
+  },[rows,q]);
+
+  const fmtTime = t => { if(!t) return '—'; const d=new Date(t);
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '
+      +String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+
+  return (
+    <main style={{flex:1,padding:32,overflow:'auto'}}>
+      <div style={{marginBottom:24}}>
+        <h1 style={{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}}>감사 로그</h1>
+        <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>누가 언제 무엇을 등록·수정·삭제했는지 기록 (최근 500건)</div>
+      </div>
+
+      <div className="card" style={{overflow:'hidden'}}>
+        <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',
+          justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:14,fontWeight:700}}>기록 · {(rows||[]).length}건</span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="사용자·작업·내용 검색" style={{maxWidth:260}}/>
+        </div>
+        {rows===null ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-history-off" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>{q?'검색 결과가 없습니다':'기록이 없습니다'}</div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr>
+                <th>일시</th><th>사용자</th><th style={{textAlign:'center'}}>작업</th>
+                <th>대상</th><th>내용</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(r=>(
+                  <tr key={r.id}>
+                    <td style={{fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>{fmtTime(r.created_at)}</td>
+                    <td style={{fontSize:12}}>{r.user_email||'—'}</td>
+                    <td style={{textAlign:'center'}}>
+                      <span className={"badge b-"+(r.action==='DELETE'?'탈락':r.action==='UPDATE'?'신청':'수행')}>
+                        {ACTION_LABEL[r.action]||r.action}</span></td>
+                    <td style={{fontSize:12,color:'var(--text-sub)'}}>{r.table_name||'—'}</td>
+                    <td style={{fontSize:12}}>{r.detail||'—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
 /* ================= 껍데기 ================= */
 function Shell({user,onLogout}){
   const [tab,setTab] = useState('dashboard');
@@ -2546,6 +2623,7 @@ function Shell({user,onLogout}){
         : tab==='dashboard' ? <Dashboard user={user} showToast={showToast} onOpen={setOpenProj}/>
         : tab==='employee' ? <EmployeeView user={user} showToast={showToast}/>
         : tab==='matrix' ? <StaffMatrixView user={user} showToast={showToast}/>
+        : tab==='audit' ? <AuditLogView user={user} showToast={showToast}/>
         : null}
       {toastNode}
     </div>
