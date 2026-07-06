@@ -54,6 +54,7 @@
   .tbl th:hover{color:var(--brand)}
   .tbl td{padding:12px 14px;border-bottom:1px solid #f3f4f6;color:var(--text)}
   .tbl tr:hover td{background:#f9fafb}
+  .row-click{cursor:pointer}
   .badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px}
   .b-준비{background:#f1f5f9;color:#475569}
   .b-신청{background:#dbeafe;color:#1d4ed8}
@@ -67,6 +68,10 @@
     padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;color:#fff;
     box-shadow:0 6px 24px rgba(0,0,0,.25);animation:pop .2s ease}
   @keyframes pop{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+  .ptab{padding:12px 4px;font-size:14px;font-weight:600;color:var(--text-muted);cursor:pointer;
+    border-bottom:2px solid transparent;margin-right:26px;white-space:nowrap;display:inline-flex;align-items:center;gap:7px}
+  .ptab.active{color:var(--brand);border-bottom-color:var(--brand)}
+  .ptab:hover{color:var(--text-sub)}
 </style>
 </head>
 <body>
@@ -84,14 +89,12 @@ const fmt = v => (Number(v)||0).toLocaleString('ko-KR');
 const STATUS = ['준비','신청','수행','완료','탈락'];
 const n = v => Number(String(v??'').replace(/,/g,''))||0;
 
-/* 감사 로그 (조용히 기록, 실패해도 앱 진행) */
 async function audit(user, action, recordId, detail){
   try{ await sb.from('audit_log').insert({
     user_email:user?.email||'', action, table_name:'projects',
     record_id:String(recordId||''), detail:detail||'' }); }catch(_){}
 }
 
-/* ================= 토스트 알림 ================= */
 function useToast(){
   const [toast,setToast] = useState(null);
   const show = (msg,type='ok') => { setToast({msg,type}); setTimeout(()=>setToast(null),2600); };
@@ -163,20 +166,14 @@ function Sidebar({user,onLogout,tab,setTab}){
 function ProjectModal({user,editItem,onClose,onSaved,showToast}){
   const isNew = !editItem;
   const [f,setF] = useState({
-    project_code: editItem?.project_code||'',
-    name:         editItem?.name||'',
-    program:      editItem?.program||'',
-    agency:       editItem?.agency||'',
-    status:       editItem?.status||'준비',
-    period_start: editItem?.period_start||'',
-    period_end:   editItem?.period_end||'',
-    govt_budget:  editItem?.govt_budget||'',
-    cash_budget:  editItem?.cash_budget||'',
-    kind_budget:  editItem?.kind_budget||'',
-    manage_folder_url:   editItem?.manage_folder_url||'',
-    evidence_folder_url: editItem?.evidence_folder_url||'',
-    owner:        editItem?.owner||'',
-    note:         editItem?.note||'',
+    project_code: editItem?.project_code||'', name: editItem?.name||'',
+    program: editItem?.program||'', agency: editItem?.agency||'',
+    status: editItem?.status||'준비',
+    period_start: editItem?.period_start||'', period_end: editItem?.period_end||'',
+    govt_budget: editItem?.govt_budget||'', cash_budget: editItem?.cash_budget||'',
+    kind_budget: editItem?.kind_budget||'',
+    manage_folder_url: editItem?.manage_folder_url||'', evidence_folder_url: editItem?.evidence_folder_url||'',
+    owner: editItem?.owner||'', note: editItem?.note||'',
   });
   const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
@@ -186,13 +183,11 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
     if(!f.name.trim()){ setErr('사업명은 필수입니다.'); return; }
     setBusy(true); setErr('');
     const payload = {
-      project_code:f.project_code.trim()||null,
-      name:f.name.trim(), program:f.program.trim()||null, agency:f.agency.trim()||null,
-      status:f.status,
+      project_code:f.project_code.trim()||null, name:f.name.trim(),
+      program:f.program.trim()||null, agency:f.agency.trim()||null, status:f.status,
       period_start:f.period_start||null, period_end:f.period_end||null,
       govt_budget:n(f.govt_budget), cash_budget:n(f.cash_budget), kind_budget:n(f.kind_budget),
-      total_budget:total,
-      manage_folder_url:f.manage_folder_url.trim()||null,
+      total_budget:total, manage_folder_url:f.manage_folder_url.trim()||null,
       evidence_folder_url:f.evidence_folder_url.trim()||null,
       owner:f.owner.trim()||null, note:f.note.trim()||null,
     };
@@ -204,10 +199,9 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
     if(res.error){ setErr('저장 실패: '+res.error.message); return; }
     audit(user, isNew?'INSERT':'UPDATE', res.data.id, res.data.name);
     showToast(isNew?'과제가 등록되었습니다':'수정되었습니다');
-    onSaved();
+    onSaved(res.data);
   }
 
-  // 모달 안쪽 클릭/드래그가 바깥(닫힘)으로 전달되지 않도록 → 드래그 시 닫히는 문제 방지
   return (
     <div className="modal-bg" onMouseDown={onClose}>
       <div className="card" style={{width:'100%',maxWidth:720,padding:26}}
@@ -216,7 +210,6 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
           <div style={{fontSize:18,fontWeight:800}}>{isNew?'신규 과제 등록':'과제 수정'}</div>
           <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
         </div>
-
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
           <div><label className="form-label">사업명 * (지원사업명)</label>
             <input value={f.name} onChange={e=>set('name',e.target.value)} placeholder="예: 2026 첨단 AI 지원사업"/></div>
@@ -252,10 +245,8 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
           <div style={{gridColumn:'1 / span 2'}}><label className="form-label">비고</label>
             <textarea value={f.note} onChange={e=>set('note',e.target.value)} rows={2} placeholder="특이사항"/></div>
         </div>
-
         {err && <div style={{marginTop:14,padding:'10px 14px',borderRadius:8,fontSize:13,
           background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
-
         <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
           <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
           <button className="btn btn-brand" onClick={save} disabled={busy}>
@@ -268,10 +259,10 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
 }
 
 /* ================= 대시보드 ================= */
-function Dashboard({user,showToast}){
+function Dashboard({user,showToast,onOpen}){
   const [rows,setRows] = useState(null);
   const [err,setErr]   = useState('');
-  const [modal,setModal] = useState(null); // null | 'new' | 과제객체
+  const [modal,setModal] = useState(null);
   const [sort,setSort] = useState({key:'created_at',dir:'desc'});
 
   async function load(){
@@ -335,7 +326,7 @@ function Dashboard({user,showToast}){
         <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',fontSize:14,fontWeight:700,
           display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <span>과제 목록</span>
-          <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>제목·기관·상태 클릭 시 정렬</span>
+          <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>과제명 클릭 시 상세 · 컬럼 클릭 시 정렬</span>
         </div>
 
         {rows===null ? (
@@ -363,10 +354,12 @@ function Dashboard({user,showToast}){
               <tbody>
                 {sorted.map(p=>(
                   <tr key={p.id}>
-                    <td>
-                      <div style={{fontWeight:700}}>{p.name}</div>
-                      {p.program && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{p.program}</div>}
-                      {p.project_code && <span className="badge b-준비" style={{marginTop:4,fontSize:10}}>{p.project_code}</span>}
+                    <td className="row-click" onClick={()=>onOpen(p)}>
+                      <div style={{fontWeight:700,color:'var(--brand)',display:'flex',alignItems:'center',gap:5}}>
+                        <i className="ti ti-chevron-right" style={{fontSize:14}}/>{p.name}
+                      </div>
+                      {p.program && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,marginLeft:19}}>{p.program}</div>}
+                      {p.project_code && <span className="badge b-준비" style={{marginTop:4,marginLeft:19,fontSize:10}}>{p.project_code}</span>}
                     </td>
                     <td style={{fontSize:12,color:'var(--text-sub)'}}>{p.agency||'—'}</td>
                     <td style={{fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>
@@ -393,11 +386,92 @@ function Dashboard({user,showToast}){
       </div>
 
       {modal && (
-        <ProjectModal user={user}
-          editItem={modal==='new'?null:modal}
-          onClose={()=>setModal(null)}
-          onSaved={()=>{ setModal(null); load(); }}
-          showToast={showToast}/>
+        <ProjectModal user={user} editItem={modal==='new'?null:modal}
+          onClose={()=>setModal(null)} onSaved={()=>{ setModal(null); load(); }} showToast={showToast}/>
+      )}
+    </main>
+  );
+}
+
+/* ================= 과제 상세 페이지 (Phase 2-1: 탭 뼈대) ================= */
+function ProjectDetail({user,project,onBack,showToast}){
+  const [proj,setProj] = useState(project);
+  const [ptab,setPtab] = useState('setup'); // prepare/setup/execute/settle
+  const [modal,setModal] = useState(false);
+
+  async function reload(){
+    const {data} = await sb.from('projects').select('*').eq('id',proj.id).single();
+    if(data) setProj(data);
+  }
+
+  const tabs = [
+    {id:'prepare', label:'준비',       icon:'ti-clipboard-list'},
+    {id:'setup',   label:'등록·설정',  icon:'ti-adjustments'},
+    {id:'execute', label:'수행·집행',  icon:'ti-receipt'},
+    {id:'settle',  label:'정산·보고',  icon:'ti-report-analytics'},
+  ];
+
+  const Info = ({label,value}) => (
+    <div>
+      <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:3}}>{label}</div>
+      <div style={{fontSize:14,fontWeight:600}}>{value||'—'}</div>
+    </div>
+  );
+
+  const placeholder = (title,desc) => (
+    <div className="card" style={{padding:'44px 24px',textAlign:'center'}}>
+      <i className="ti ti-tools" style={{fontSize:36,color:'#cbd5e1'}}/>
+      <div style={{fontWeight:700,marginTop:12}}>{title}</div>
+      <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>{desc}</div>
+    </div>
+  );
+
+  return (
+    <main style={{flex:1,padding:32,overflow:'auto'}}>
+      <button className="btn btn-ghost btn-sm" onClick={onBack} style={{marginBottom:16}}>
+        <i className="ti ti-arrow-left"/> 목록으로
+      </button>
+
+      {/* 과제 요약 헤더 */}
+      <div className="card" style={{padding:24,marginBottom:20}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <h1 style={{fontSize:20,fontWeight:800,letterSpacing:'-.02em'}}>{proj.name}</h1>
+              <span className={"badge b-"+(proj.status||'준비')}>{proj.status||'준비'}</span>
+            </div>
+            {proj.program && <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>{proj.program}</div>}
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setModal(true)}><i className="ti ti-pencil"/> 기본정보 수정</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:18,marginTop:20,
+          paddingTop:18,borderTop:'1px solid var(--border)'}}>
+          <Info label="주관기관" value={proj.agency}/>
+          <Info label="협약기간" value={(proj.period_start||'—')+' ~ '+(proj.period_end||'—')}/>
+          <Info label="총사업비" value={proj.total_budget?fmt(proj.total_budget)+'원':'—'}/>
+          <Info label="담당자" value={proj.owner}/>
+        </div>
+      </div>
+
+      {/* 4단계 탭 */}
+      <div style={{borderBottom:'1px solid var(--border)',marginBottom:22,overflowX:'auto',whiteSpace:'nowrap'}}>
+        {tabs.map(t=>(
+          <span key={t.id} className={"ptab"+(ptab===t.id?' active':'')} onClick={()=>setPtab(t.id)}>
+            <i className={"ti "+t.icon}/>{t.label}
+          </span>
+        ))}
+      </div>
+
+      {/* 탭 내용 (Phase 2-1은 뼈대만; 다음 단계에서 채움) */}
+      {ptab==='prepare' && placeholder('Phase 1 · 준비','과제 준비 단계 정보가 여기 들어갑니다.')}
+      {ptab==='setup'   && placeholder('Phase 2 · 등록·설정','다음 단계에서 사업비 계산기 · 연차 관리 · 세부 비목이 추가됩니다.')}
+      {ptab==='execute' && placeholder('Phase 3 · 수행·집행','집행 입력 · 인건비 · 현물이 추가됩니다.')}
+      {ptab==='settle'  && placeholder('Phase 4 · 정산·보고','연차별 집행률 · 잔액 · 증빙 점검 · 엑셀 내보내기가 추가됩니다.')}
+
+      {modal && (
+        <ProjectModal user={user} editItem={proj}
+          onClose={()=>setModal(false)}
+          onSaved={()=>{ setModal(false); reload(); }} showToast={showToast}/>
       )}
     </main>
   );
@@ -406,11 +480,17 @@ function Dashboard({user,showToast}){
 /* ================= 껍데기 ================= */
 function Shell({user,onLogout}){
   const [tab,setTab] = useState('dashboard');
+  const [openProj,setOpenProj] = useState(null); // 열려있는 과제 (상세)
   const [toastNode,showToast] = useToast();
+
   return (
     <div style={{display:'flex',minHeight:'100vh'}}>
-      <Sidebar user={user} onLogout={onLogout} tab={tab} setTab={setTab}/>
-      {tab==='dashboard' && <Dashboard user={user} showToast={showToast}/>}
+      <Sidebar user={user} onLogout={onLogout}
+        tab={openProj?'':tab}
+        setTab={t=>{ setOpenProj(null); setTab(t); }}/>
+      {openProj
+        ? <ProjectDetail user={user} project={openProj} onBack={()=>setOpenProj(null)} showToast={showToast}/>
+        : (tab==='dashboard' && <Dashboard user={user} showToast={showToast} onOpen={setOpenProj}/>)}
       {toastNode}
     </div>
   );
