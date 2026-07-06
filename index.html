@@ -148,8 +148,8 @@ function Sidebar({user,onLogout,tab,setTab}){
         <i className="ti ti-layout-dashboard"/> 전체 현황판
       </div>
       <div className="grp-label">공통 관리</div>
-      <div className="sidebar-item" style={{opacity:.5,cursor:'default'}}>
-        <i className="ti ti-users"/> 직원 관리 <span style={{fontSize:9,marginLeft:'auto'}}>준비중</span>
+      <div className={"sidebar-item"+(tab==='employee'?' active':'')} onClick={()=>setTab('employee')}>
+        <i className="ti ti-users"/> 직원 관리
       </div>
       <div className="sidebar-item" style={{opacity:.5,cursor:'default'}}>
         <i className="ti ti-layout-grid"/> 참여율 현황 <span style={{fontSize:9,marginLeft:'auto'}}>준비중</span>
@@ -954,11 +954,280 @@ function CategoryManager({user,proj,showToast}){
   );
 }
 
+/* ================= 유틸: 과제 협약기간의 연-월 목록 ================= */
+function ymList(start,end){
+  if(!start||!end) return [];
+  const out=[]; let d=new Date(start.slice(0,7)+'-01'); const e=new Date(end.slice(0,7)+'-01');
+  let guard=0;
+  while(d<=e && guard<120){ out.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); d.setMonth(d.getMonth()+1); guard++; }
+  return out;
+}
+const FUND_LABEL = {gov_support:'정부지원', self_cash:'자부담현금', self_kind:'자부담현물'};
+
+/* ================= 인력 배정 모달 ================= */
+function StaffAllocModal({proj,employees,alloc,initRates,onClose,onSave}){
+  const isNew = !alloc;
+  const months = useMemo(()=>ymList(proj.period_start,proj.period_end),[proj.id]);
+  const [employeeId,setEmployeeId] = useState(alloc?.employee_id||'');
+  const [fundType,setFundType]     = useState(alloc?.fund_type||'gov_support');
+  const [startMonth,setStartMonth] = useState(alloc?.start_month||'');
+  const [endMonth,setEndMonth]     = useState(alloc?.end_month||'');
+  const [note,setNote]             = useState(alloc?.note||'');
+  const [baseRate,setBaseRate]     = useState('');
+  // rates: { '2026-06': '20', ... }  (퍼센트 문자열)
+  const [rates,setRates] = useState(()=>{
+    const o={}; (months||[]).forEach(m=>{ o[m]= initRates && initRates[m]!=null ? String(Math.round(initRates[m]*100)) : ''; });
+    return o;
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+
+  const emp = employees.find(e=>String(e.id)===String(employeeId));
+  const salary = emp ? Number(emp.monthly_salary)||0 : 0;
+  const setRate=(m,v)=>setRates(p=>({...p,[m]:v.replace(/[^0-9.]/g,'')}));
+  const fillAll=v=>{ const o={}; months.forEach(m=>o[m]=v); setRates(o); };
+
+  const annual = months.reduce((s,m)=>s+Math.round(salary*(parseFloat(rates[m])||0)/100),0);
+
+  async function go(){
+    if(!employeeId){ setErr('직원을 선택하세요.'); return; }
+    if(months.length===0){ setErr('먼저 과제의 협약기간(시작일/종료일)을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      alloc: { project_id:proj.id, employee_id:Number(employeeId), fund_type:fundType,
+        start_month:startMonth||null, end_month:endMonth||null, note:note.trim()||null },
+      rates: months.map(m=>({ ym:m, rate:(parseFloat(rates[m])||0)/100 })).filter(r=>r.rate>0),
+      allocId: alloc?.id||null,
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:820,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'인력 배정 추가':'인력 배정 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:13,marginBottom:16}}>
+          <div><label className="form-label">직원 *</label>
+            <select value={employeeId} onChange={e=>setEmployeeId(e.target.value)}>
+              <option value="">직원 선택</option>
+              {employees.map(e=><option key={e.id} value={e.id}>{e.name}{e.position?' ('+e.position+')':''}</option>)}
+            </select></div>
+          <div><label className="form-label">재원 구분</label>
+            <select value={fundType} onChange={e=>setFundType(e.target.value)}>
+              <option value="gov_support">정부지원</option>
+              <option value="self_cash">자부담현금</option>
+              <option value="self_kind">자부담현물</option>
+            </select></div>
+          <div><label className="form-label">월 인건비 (직원 마스터)</label>
+            <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,border:'1px solid var(--border)',
+              fontWeight:700}}>{salary?fmt(salary)+'원':'—'}</div></div>
+          <div><label className="form-label">참여 시작월</label>
+            <input type="month" value={startMonth} onChange={e=>setStartMonth(e.target.value)}/></div>
+          <div><label className="form-label">참여 종료월</label>
+            <input type="month" value={endMonth} onChange={e=>setEndMonth(e.target.value)}/></div>
+        </div>
+
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+          <label className="form-label" style={{margin:0}}>월별 참여율 (%) · 협약기간 {months.length}개월</label>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            <input value={baseRate} onChange={e=>setBaseRate(e.target.value.replace(/[^0-9.]/g,''))}
+              placeholder="기본율" style={{width:70,padding:'5px 8px',fontSize:12}}/>
+            <button className="btn btn-ghost btn-sm" onClick={()=>fillAll(baseRate)}>전체 채우기</button>
+            <button className="btn btn-ghost btn-sm" onClick={()=>fillAll('')}>전체 지우기</button>
+          </div>
+        </div>
+
+        {months.length===0 ? (
+          <div style={{padding:'20px',textAlign:'center',fontSize:13,color:'#ef4444',
+            background:'rgba(239,68,68,.06)',borderRadius:8,marginBottom:14}}>
+            협약기간이 없습니다. 상단 "기본정보 수정"에서 협약 시작일/종료일을 먼저 입력하세요.
+          </div>
+        ) : (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:8,marginBottom:16}}>
+            {months.map(m=>(
+              <div key={m}>
+                <label style={{fontSize:10,color:'var(--text-sub)',display:'block',marginBottom:4,textAlign:'center'}}>{m}</label>
+                <input value={rates[m]||''} onChange={e=>setRate(m,e.target.value)} placeholder="0"
+                  style={{textAlign:'center',padding:'6px 4px'}}/>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+          padding:'12px 16px',background:'rgba(249,115,22,.06)',borderRadius:8,marginBottom:14}}>
+          <span style={{fontSize:13,fontWeight:600,color:'var(--text-sub)'}}>연간 인건비 (참여율 반영)</span>
+          <span style={{fontSize:16,fontWeight:800,color:'var(--brand)'}}>{fmt(annual)}원</span>
+        </div>
+
+        <div style={{marginBottom:6}}><label className="form-label">비고</label>
+          <input value={note} onChange={e=>setNote(e.target.value)} placeholder="특이사항"/></div>
+
+        {err && <div style={{marginTop:12,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 인력 배정 관리 (수행·집행 탭 내용 1) ================= */
+function StaffManager({user,proj,showToast}){
+  const [emps,setEmps]   = useState(null);
+  const [allocs,setAllocs] = useState(null);
+  const [ratesMap,setRatesMap] = useState({}); // allocId -> { ym: rate }
+  const [modal,setModal] = useState(null); // null | 'new' | alloc객체
+  const months = useMemo(()=>ymList(proj.period_start,proj.period_end),[proj.id]);
+
+  async function load(){
+    const [{data:e},{data:a}] = await Promise.all([
+      sb.from('employees').select('*').order('name'),
+      sb.from('staff_allocations').select('*').eq('project_id',proj.id).order('id'),
+    ]);
+    setEmps(e||[]); setAllocs(a||[]);
+    const ids=(a||[]).map(x=>x.id);
+    if(ids.length){
+      const {data:r} = await sb.from('staff_rates').select('*').in('allocation_id',ids);
+      const map={}; (r||[]).forEach(row=>{ (map[row.allocation_id]=map[row.allocation_id]||{})[row.ym]=Number(row.rate)||0; });
+      setRatesMap(map);
+    } else setRatesMap({});
+  }
+  useEffect(()=>{ load(); },[proj.id]);
+
+  const empById = id => (emps||[]).find(e=>String(e.id)===String(id));
+
+  async function saveAlloc({alloc,rates,allocId}){
+    let id = allocId;
+    if(!id){
+      const {data,error} = await sb.from('staff_allocations').insert(alloc).select().single();
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      id = data.id;
+    }else{
+      const {error} = await sb.from('staff_allocations').update(alloc).eq('id',id);
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+    }
+    // 참여율 재저장 (기존 삭제 후 삽입)
+    await sb.from('staff_rates').delete().eq('allocation_id',id);
+    if(rates.length){
+      const ins = rates.map(r=>({allocation_id:id, ym:r.ym, rate:r.rate}));
+      const {error:er2} = await sb.from('staff_rates').insert(ins);
+      if(er2){ showToast('참여율 저장 실패: '+er2.message,'err'); return; }
+    }
+    showToast(allocId?'수정되었습니다':'인력이 배정되었습니다');
+    setModal(null); load();
+  }
+
+  async function delAlloc(a){
+    const emp=empById(a.employee_id);
+    if(!confirm(`"${emp?emp.name:'해당 직원'}"의 배정을 삭제하시겠습니까?`)) return;
+    await sb.from('staff_rates').delete().eq('allocation_id',a.id);
+    const {error} = await sb.from('staff_allocations').delete().eq('id',a.id);
+    if(error){ showToast('삭제 실패: '+error.message,'err'); return; }
+    showToast('삭제되었습니다'); load();
+  }
+
+  // 배정별 연간 인건비 계산
+  const calcAnnual = a => {
+    const emp=empById(a.employee_id); const sal=emp?Number(emp.monthly_salary)||0:0;
+    const rm=ratesMap[a.id]||{};
+    return months.reduce((s,m)=>s+Math.round(sal*(rm[m]||0)),0);
+  };
+  const totalLabor = (allocs||[]).reduce((s,a)=>s+calcAnnual(a),0);
+
+  return (
+    <div>
+      <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+        justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+        <div style={{fontSize:13,color:'var(--text-sub)'}}>
+          <i className="ti ti-info-circle" style={{color:'var(--brand)',marginRight:6}}/>
+          직원을 선택해 배정하고 월별 참여율을 입력합니다. 인건비 = 직원 월급 × 참여율.
+        </div>
+        <button className="btn btn-brand btn-sm" onClick={()=>setModal('new')}><i className="ti ti-user-plus"/> 인력 배정</button>
+      </div>
+
+      {allocs && allocs.length>0 && (
+        <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:16}}>
+          <div className="card" style={{padding:'14px 16px'}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>배정 인원</div>
+            <div style={{fontSize:17,fontWeight:800}}>{allocs.length}명</div></div>
+          <div className="card" style={{padding:'14px 16px'}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>연간 인건비 합계 (참여율 반영)</div>
+            <div style={{fontSize:17,fontWeight:800,color:'var(--brand)'}}>{fmt(totalLabor)}원</div></div>
+        </div>
+      )}
+
+      <div className="card" style={{overflow:'hidden'}}>
+        {(emps===null||allocs===null) ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : allocs.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-users" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>배정된 인력이 없습니다</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>
+              "인력 배정"으로 직원을 추가하세요. {emps.length===0 && '(먼저 "직원 관리"에서 직원을 등록해야 합니다.)'}
+            </div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr>
+                <th>직원</th><th style={{textAlign:'center'}}>구분</th>
+                <th style={{textAlign:'right'}}>월 인건비</th>
+                <th style={{textAlign:'center'}}>참여기간</th>
+                <th style={{textAlign:'center'}}>참여 개월</th>
+                <th style={{textAlign:'right'}}>연간 인건비</th>
+                <th style={{textAlign:'center'}}>관리</th>
+              </tr></thead>
+              <tbody>
+                {allocs.map(a=>{
+                  const emp=empById(a.employee_id);
+                  const rm=ratesMap[a.id]||{};
+                  const activeMonths=months.filter(m=>(rm[m]||0)>0).length;
+                  return (
+                    <tr key={a.id}>
+                      <td style={{fontWeight:700}}>{emp?emp.name:'(삭제된 직원)'}
+                        {emp?.position && <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400,marginLeft:6}}>{emp.position}</span>}</td>
+                      <td style={{textAlign:'center'}}><span className="badge b-신청">{FUND_LABEL[a.fund_type]||a.fund_type}</span></td>
+                      <td style={{textAlign:'right'}}>{emp?fmt(emp.monthly_salary)+'원':'—'}</td>
+                      <td style={{textAlign:'center',fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>
+                        {a.start_month||'—'} ~ {a.end_month||'—'}</td>
+                      <td style={{textAlign:'center'}}>{activeMonths}/{months.length}</td>
+                      <td style={{textAlign:'right',fontWeight:700}}>{fmt(calcAnnual(a))}원</td>
+                      <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                        <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal(a)}><i className="ti ti-pencil"/></button>
+                        <button className="btn btn-ghost btn-sm" onClick={()=>delAlloc(a)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modal && emps && (
+        <StaffAllocModal proj={proj} employees={emps}
+          alloc={modal==='new'?null:modal}
+          initRates={modal==='new'?null:(ratesMap[modal.id]||{})}
+          onClose={()=>setModal(null)} onSave={saveAlloc}/>
+      )}
+    </div>
+  );
+}
+
 /* ================= 과제 상세 페이지 ================= */
 function ProjectDetail({user,project,onBack,showToast}){
   const [proj,setProj] = useState(project);
   const [ptab,setPtab] = useState('setup'); // prepare/setup/execute/settle
-  const [setupTab,setSetupTab] = useState('calc'); // calc/years
+  const [setupTab,setSetupTab] = useState('calc'); // calc/years/cats
+  const [execTab,setExecTab] = useState('staff'); // staff/spend/inkind
   const [modal,setModal] = useState(false);
 
   async function reload(){
@@ -1041,7 +1310,21 @@ function ProjectDetail({user,project,onBack,showToast}){
           {setupTab==='cats'  && <CategoryManager user={user} proj={proj} showToast={showToast}/>}
         </div>
       )}
-      {ptab==='execute' && placeholder('Phase 3 · 수행·집행','집행 입력 · 인건비 · 현물이 추가됩니다.')}
+      {ptab==='execute' && (
+        <div>
+          <div style={{display:'flex',gap:8,marginBottom:18}}>
+            <button className={"btn btn-sm "+(execTab==='staff'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('staff')}>
+              <i className="ti ti-users"/> 인력 배정</button>
+            <button className={"btn btn-sm "+(execTab==='spend'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('spend')}>
+              <i className="ti ti-receipt"/> 집행 입력</button>
+            <button className={"btn btn-sm "+(execTab==='inkind'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('inkind')}>
+              <i className="ti ti-server"/> 현물</button>
+          </div>
+          {execTab==='staff'  && <StaffManager user={user} proj={proj} showToast={showToast}/>}
+          {execTab==='spend'  && placeholder('집행 입력','다음 단계에서 집행 내역 입력 · 인건비 자동계상이 추가됩니다.')}
+          {execTab==='inkind' && placeholder('현물','다음 단계에서 장비·임차 현물 관리가 추가됩니다.')}
+        </div>
+      )}
       {ptab==='settle'  && placeholder('Phase 4 · 정산·보고','연차별 집행률 · 잔액 · 증빙 점검 · 엑셀 내보내기가 추가됩니다.')}
 
       {modal && (
@@ -1049,6 +1332,179 @@ function ProjectDetail({user,project,onBack,showToast}){
           onClose={()=>setModal(false)}
           onSaved={()=>{ setModal(false); reload(); }} showToast={showToast}/>
       )}
+    </main>
+  );
+}
+
+/* ================= 직원 등록/수정 모달 ================= */
+const EMP_CATEGORY = ['연구원','외부','관리','기타'];
+function EmployeeModal({emp,onClose,onSave}){
+  const isNew = !emp;
+  const [f,setF] = useState({
+    name: emp?.name||'', position: emp?.position||'', department: emp?.department||'',
+    category: emp?.category||'연구원', monthly_salary: emp?.monthly_salary||'',
+    email: emp?.email||'', join_date: emp?.join_date||'', leave_date: emp?.leave_date||'',
+    note: emp?.note||'',
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  async function go(){
+    if(!f.name.trim()){ setErr('이름을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      name:f.name.trim(), position:f.position.trim()||null, department:f.department.trim()||null,
+      category:f.category, monthly_salary:n(f.monthly_salary),
+      email:f.email.trim()||null, join_date:f.join_date||null, leave_date:f.leave_date||null,
+      note:f.note.trim()||null,
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:600,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'직원 추가':'직원 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+        {!isNew && (
+          <div style={{padding:'10px 14px',background:'rgba(16,185,129,.08)',border:'1px solid rgba(16,185,129,.2)',
+            borderRadius:8,fontSize:12,color:'#15803d',marginBottom:16}}>
+            <i className="ti ti-info-circle"/> 월 인건비를 수정하면 이 직원이 배정된 모든 과제 계산에 반영됩니다.
+          </div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:13}}>
+          <div><label className="form-label">이름 *</label>
+            <input value={f.name} onChange={e=>set('name',e.target.value)} placeholder="홍길동"/></div>
+          <div><label className="form-label">직급</label>
+            <input value={f.position} onChange={e=>set('position',e.target.value)} placeholder="예: 선임연구원"/></div>
+          <div><label className="form-label">부서</label>
+            <input value={f.department} onChange={e=>set('department',e.target.value)} placeholder="예: 연구개발팀"/></div>
+          <div><label className="form-label">구분</label>
+            <select value={f.category} onChange={e=>set('category',e.target.value)}>
+              {EMP_CATEGORY.map(c=><option key={c} value={c}>{c}</option>)}
+            </select></div>
+          <div><label className="form-label">월 인건비 (원)</label>
+            <MoneyInput value={f.monthly_salary} onChange={v=>set('monthly_salary',v)} placeholder="0"/></div>
+          <div><label className="form-label">이메일</label>
+            <input type="email" value={f.email} onChange={e=>set('email',e.target.value)} placeholder="example@company.com"/></div>
+          <div><label className="form-label">입사일</label>
+            <input type="date" value={f.join_date} onChange={e=>set('join_date',e.target.value)}/></div>
+          <div><label className="form-label">퇴사일</label>
+            <input type="date" value={f.leave_date} onChange={e=>set('leave_date',e.target.value)}/></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">비고</label>
+            <input value={f.note} onChange={e=>set('note',e.target.value)} placeholder="특이사항"/></div>
+        </div>
+        {err && <div style={{marginTop:14,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:18}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 직원 관리 (공통) ================= */
+function EmployeeView({user,showToast}){
+  const [rows,setRows] = useState(null);
+  const [modal,setModal] = useState(null);
+  const [q,setQ] = useState('');
+
+  async function load(){
+    const {data} = await sb.from('employees').select('*').order('name');
+    setRows(data||[]);
+  }
+  useEffect(()=>{ load(); },[]);
+
+  const filtered = useMemo(()=>{
+    const list=rows||[];
+    if(!q.trim()) return list;
+    const s=q.trim().toLowerCase();
+    return list.filter(e=>[e.name,e.position,e.department,e.category].some(v=>String(v||'').toLowerCase().includes(s)));
+  },[rows,q]);
+
+  async function saveEmp(payload){
+    if(modal==='new'){
+      const {error} = await sb.from('employees').insert(payload);
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('직원이 추가되었습니다');
+    }else{
+      payload.updated_at=new Date().toISOString();
+      const {error} = await sb.from('employees').update(payload).eq('id',modal.id);
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('수정되었습니다');
+    }
+    setModal(null); load();
+  }
+
+  async function delEmp(e){
+    if(!confirm(`"${e.name}" 직원을 삭제하시겠습니까?`)) return;
+    const {error} = await sb.from('employees').delete().eq('id',e.id);
+    if(error){
+      showToast('삭제 실패: 이 직원이 과제에 배정되어 있으면 먼저 배정을 해제해야 합니다','err'); return;
+    }
+    showToast('삭제되었습니다'); load();
+  }
+
+  return (
+    <main style={{flex:1,padding:32,overflow:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
+        <div>
+          <h1 style={{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}}>직원 관리</h1>
+          <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>회사 전체 직원 마스터 · 월 인건비 수정 시 모든 과제에 반영</div>
+        </div>
+        <button className="btn btn-brand" onClick={()=>setModal('new')}><i className="ti ti-plus"/> 직원 추가</button>
+      </div>
+
+      <div className="card" style={{overflow:'hidden'}}>
+        <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',
+          justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:14,fontWeight:700}}>직원 목록 · {(rows||[]).length}명</span>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="이름·직급·부서 검색"
+            style={{maxWidth:240}}/>
+        </div>
+
+        {rows===null ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-user-off" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>{q?'검색 결과가 없습니다':'등록된 직원이 없습니다'}</div>
+            {!q && <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>"직원 추가"로 시작하세요.</div>}
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr>
+                <th>이름</th><th>직급</th><th>부서</th><th style={{textAlign:'center'}}>구분</th>
+                <th style={{textAlign:'right'}}>월 인건비</th><th>이메일</th>
+                <th style={{textAlign:'center'}}>관리</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(e=>(
+                  <tr key={e.id}>
+                    <td style={{fontWeight:700}}>{e.name}{e.leave_date && <span className="badge b-탈락" style={{marginLeft:6,fontSize:10}}>퇴사</span>}</td>
+                    <td style={{fontSize:12,color:'var(--text-sub)'}}>{e.position||'—'}</td>
+                    <td style={{fontSize:12,color:'var(--text-sub)'}}>{e.department||'—'}</td>
+                    <td style={{textAlign:'center'}}><span className="badge b-신청">{e.category||'—'}</span></td>
+                    <td style={{textAlign:'right',fontWeight:700}}>{e.monthly_salary?fmt(e.monthly_salary)+'원':'—'}</td>
+                    <td style={{fontSize:12,color:'var(--text-sub)'}}>{e.email||'—'}</td>
+                    <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                      <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal(e)}><i className="ti ti-pencil"/></button>
+                      <button className="btn btn-ghost btn-sm" onClick={()=>delEmp(e)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modal && <EmployeeModal emp={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={saveEmp}/>}
     </main>
   );
 }
@@ -1066,7 +1522,9 @@ function Shell({user,onLogout}){
         setTab={t=>{ setOpenProj(null); setTab(t); }}/>
       {openProj
         ? <ProjectDetail user={user} project={openProj} onBack={()=>setOpenProj(null)} showToast={showToast}/>
-        : (tab==='dashboard' && <Dashboard user={user} showToast={showToast} onOpen={setOpenProj}/>)}
+        : tab==='dashboard' ? <Dashboard user={user} showToast={showToast} onOpen={setOpenProj}/>
+        : tab==='employee' ? <EmployeeView user={user} showToast={showToast}/>
+        : null}
       {toastNode}
     </div>
   );
