@@ -1795,8 +1795,7 @@ function LeaseModal({lease,onClose,onSave}){
 }
 
 /* ================= 현물 관리 (수행·집행 탭 내용 4) ================= */
-function InkindManager({user,proj,showToast}){
-  const [kind,setKind] = useState('equip'); // equip/lease
+function InkindManager({user,proj,showToast,kind='equip'}){
   const [eqs,setEqs]   = useState(null);
   const [lss,setLss]   = useState(null);
   const [modal,setModal] = useState(null); // {type:'equip'|'lease', item} | {type, item:'new'}
@@ -1838,13 +1837,6 @@ function InkindManager({user,proj,showToast}){
 
   return (
     <div>
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        <button className={"btn btn-sm "+(kind==='equip'?'btn-brand':'btn-ghost')} onClick={()=>setKind('equip')}>
-          <i className="ti ti-device-desktop"/> 장비 현물</button>
-        <button className={"btn btn-sm "+(kind==='lease'?'btn-brand':'btn-ghost')} onClick={()=>setKind('lease')}>
-          <i className="ti ti-building"/> 임차 현물</button>
-      </div>
-
       {kind==='equip' ? (
         <div>
           <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
@@ -2228,20 +2220,23 @@ function ProjectDetail({user,project,onBack,showToast}){
       )}
       {ptab==='execute' && (
         <div>
-          <div style={{display:'flex',gap:8,marginBottom:18}}>
+          <div style={{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap'}}>
             <button className={"btn btn-sm "+(execTab==='staff'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('staff')}>
               <i className="ti ti-users"/> 인력 배정</button>
             <button className={"btn btn-sm "+(execTab==='spend'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('spend')}>
               <i className="ti ti-receipt"/> 집행 입력</button>
             <button className={"btn btn-sm "+(execTab==='labor'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('labor')}>
               <i className="ti ti-user-dollar"/> 인건비 계상</button>
-            <button className={"btn btn-sm "+(execTab==='inkind'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('inkind')}>
-              <i className="ti ti-server"/> 현물</button>
+            <button className={"btn btn-sm "+(execTab==='equip'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('equip')}>
+              <i className="ti ti-device-desktop"/> 장비 현물</button>
+            <button className={"btn btn-sm "+(execTab==='lease'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('lease')}>
+              <i className="ti ti-building"/> 임차 현물</button>
           </div>
           {execTab==='staff'  && <StaffManager user={user} proj={proj} showToast={showToast}/>}
           {execTab==='spend'  && <SpendManager user={user} proj={proj} showToast={showToast}/>}
           {execTab==='labor'  && <LaborAutoCalc user={user} proj={proj} showToast={showToast}/>}
-          {execTab==='inkind' && <InkindManager user={user} proj={proj} showToast={showToast}/>}
+          {execTab==='equip'  && <InkindManager user={user} proj={proj} showToast={showToast} kind="equip"/>}
+          {execTab==='lease'  && <InkindManager user={user} proj={proj} showToast={showToast} kind="lease"/>}
         </div>
       )}
       {ptab==='settle'  && <SettleView user={user} proj={proj} showToast={showToast}/>}
