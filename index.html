@@ -151,8 +151,8 @@ function Sidebar({user,onLogout,tab,setTab}){
       <div className={"sidebar-item"+(tab==='employee'?' active':'')} onClick={()=>setTab('employee')}>
         <i className="ti ti-users"/> 직원 관리
       </div>
-      <div className="sidebar-item" style={{opacity:.5,cursor:'default'}}>
-        <i className="ti ti-layout-grid"/> 참여율 현황 <span style={{fontSize:9,marginLeft:'auto'}}>준비중</span>
+      <div className={"sidebar-item"+(tab==='matrix'?' active':'')} onClick={()=>setTab('matrix')}>
+        <i className="ti ti-layout-grid"/> 참여율 현황
       </div>
       <div style={{marginTop:'auto',padding:'14px 8px 0',borderTop:'1px solid rgba(255,255,255,.08)'}}>
         <div style={{fontSize:11,color:'#cbd5e1',marginBottom:8,wordBreak:'break-all'}}>{user.email}</div>
@@ -1509,6 +1509,161 @@ function EmployeeView({user,showToast}){
   );
 }
 
+/* ================= 참여율 현황 매트릭스 (공통) ================= */
+function StaffMatrixView({user,showToast}){
+  const [emps,setEmps]     = useState(null);
+  const [allocs,setAllocs] = useState([]);
+  const [ratesByAlloc,setRatesByAlloc] = useState({});
+  const [projMap,setProjMap] = useState({});
+  const [year,setYear]     = useState(new Date().getFullYear());
+  const [open,setOpen]     = useState(null); // 펼친 직원 id
+
+  async function load(){
+    const [{data:e},{data:a},{data:p}] = await Promise.all([
+      sb.from('employees').select('*').order('name'),
+      sb.from('staff_allocations').select('*'),
+      sb.from('projects').select('id,name,project_code'),
+    ]);
+    setEmps(e||[]); setAllocs(a||[]);
+    const pm={}; (p||[]).forEach(x=>pm[x.id]=x); setProjMap(pm);
+    const ids=(a||[]).map(x=>x.id);
+    if(ids.length){
+      const {data:r} = await sb.from('staff_rates').select('*').in('allocation_id',ids);
+      const map={}; (r||[]).forEach(row=>{ (map[row.allocation_id]=map[row.allocation_id]||{})[row.ym]=Number(row.rate)||0; });
+      setRatesByAlloc(map);
+    } else setRatesByAlloc({});
+  }
+  useEffect(()=>{ load(); },[]);
+
+  const empById = id => (emps||[]).find(e=>String(e.id)===String(id));
+  const MM = m => String(m).padStart(2,'0');
+  const ymOf = m => year+'-'+MM(m);
+
+  // 연도 후보
+  const years = useMemo(()=>{
+    const set=new Set();
+    Object.values(ratesByAlloc).forEach(rm=>Object.keys(rm).forEach(ym=>set.add(Number(ym.slice(0,4)))));
+    set.add(new Date().getFullYear());
+    return [...set].sort((a,b)=>a-b);
+  },[ratesByAlloc]);
+
+  // 인원별 그룹핑
+  const people = useMemo(()=>{
+    const map={};
+    (allocs||[]).forEach(a=>{
+      const emp=empById(a.employee_id); if(!emp) return;
+      if(!map[a.employee_id]) map[a.employee_id]={emp, allocs:[]};
+      map[a.employee_id].allocs.push(a);
+    });
+    return Object.values(map).sort((x,y)=>String(x.emp.name).localeCompare(String(y.emp.name)));
+  },[allocs,emps]);
+
+  // 인원 × 월 합계 (해당 연도)
+  const monthTotal = (person,m) => person.allocs.reduce((s,a)=>{
+    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(m)]||0); },0);
+  // 인원 × 과제 × 월
+  const projMonth = (allocList,m) => allocList.reduce((s,a)=>{
+    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(m)]||0); },0);
+
+  const st = pct => pct>100 ? {c:'#ef4444',t:'초과'} : pct>=80 ? {c:'#f59e0b',t:'주의'} : pct>0 ? {c:'#10b981',t:'정상'} : {c:'#cbd5e1',t:'—'};
+
+  // 이 연도에 100% 초과가 한 번이라도 있는 인원
+  const overList = useMemo(()=>{
+    return people.filter(p=>[1,2,3,4,5,6,7,8,9,10,11,12].some(m=>Math.round(monthTotal(p,m)*100)>100))
+      .map(p=>p.emp.name);
+  },[people,ratesByAlloc,year]);
+
+  const cell = (pct,strong) => {
+    const v=Math.round(pct*100);
+    const s=st(v);
+    return <span style={{fontWeight:v>0?700:400,color:v>0?s.c:'#cbd5e1'}}>{v>0?v+'%':'—'}{strong&&v>100?' ⚠':''}</span>;
+  };
+
+  return (
+    <main style={{flex:1,padding:32,overflow:'auto'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24,flexWrap:'wrap',gap:12}}>
+        <div>
+          <h1 style={{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}}>참여율 현황</h1>
+          <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>전 직원 × 월별 참여율 (전체 과제 합산) · 100% 초과 경고</div>
+        </div>
+        <select value={year} onChange={e=>setYear(Number(e.target.value))} style={{width:120}}>
+          {years.map(y=><option key={y} value={y}>{y}년</option>)}
+        </select>
+      </div>
+
+      {/* 초과 경고 */}
+      {overList.length>0 && (
+        <div className="card" style={{padding:'12px 16px',marginBottom:16,borderLeft:'3px solid #ef4444',
+          background:'rgba(239,68,68,.05)'}}>
+          <span style={{fontWeight:700,color:'#ef4444'}}><i className="ti ti-alert-triangle"/> 참여율 초과 </span>
+          <span style={{fontSize:13,color:'var(--text-sub)'}}>{year}년 중 월 합산 100% 초과: {overList.join(', ')}</span>
+        </div>
+      )}
+
+      <div className="card" style={{overflow:'hidden'}}>
+        {emps===null ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : people.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-layout-grid" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>배정된 인력이 없습니다</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>과제 상세 → 수행·집행 → 인력 배정에서 먼저 배정하세요.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl" style={{minWidth:820}}>
+              <thead><tr>
+                <th style={{position:'sticky',left:0,background:'#f9fafb',zIndex:2,minWidth:110}}>성명</th>
+                <th style={{textAlign:'right',minWidth:90}}>월급</th>
+                {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
+                  <th key={m} style={{textAlign:'center',minWidth:44}}>{m}월</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {people.map(p=>{
+                  const isOpen=open===p.emp.id;
+                  const byProj={};
+                  p.allocs.forEach(a=>{ (byProj[a.project_id]=byProj[a.project_id]||[]).push(a); });
+                  return (
+                    <React.Fragment key={p.emp.id}>
+                      <tr>
+                        <td style={{position:'sticky',left:0,background:'#fff',fontWeight:700,cursor:'pointer'}}
+                          onClick={()=>setOpen(isOpen?null:p.emp.id)}>
+                          <i className={"ti ti-chevron-"+(isOpen?'down':'right')} style={{fontSize:13,marginRight:4,color:'var(--brand)'}}/>
+                          {p.emp.name}
+                          {p.emp.position && <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:400,marginLeft:5}}>{p.emp.position}</span>}
+                        </td>
+                        <td style={{textAlign:'right',fontSize:12,color:'var(--text-sub)'}}>{fmt(p.emp.monthly_salary)}</td>
+                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
+                          <td key={m} style={{textAlign:'center',fontSize:12}}>{cell(monthTotal(p,m),true)}</td>
+                        ))}
+                      </tr>
+                      {isOpen && Object.keys(byProj).map(pid=>(
+                        <tr key={p.emp.id+'-'+pid} style={{background:'#fafbfc'}}>
+                          <td style={{position:'sticky',left:0,background:'#fafbfc',paddingLeft:28,fontSize:12,color:'var(--text-sub)'}}>
+                            {projMap[pid]?.project_code || projMap[pid]?.name || pid}
+                          </td>
+                          <td></td>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
+                            <td key={m} style={{textAlign:'center',fontSize:11,color:'var(--text-muted)'}}>{cell(projMonth(byProj[pid],m))}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:10}}>
+        성명을 클릭하면 과제별 참여율이 펼쳐집니다. · 색상: <b style={{color:'#10b981'}}>정상</b> / <b style={{color:'#f59e0b'}}>주의(80%↑)</b> / <b style={{color:'#ef4444'}}>초과(100%↑) ⚠</b>
+      </div>
+    </main>
+  );
+}
+
 /* ================= 껍데기 ================= */
 function Shell({user,onLogout}){
   const [tab,setTab] = useState('dashboard');
@@ -1524,6 +1679,7 @@ function Shell({user,onLogout}){
         ? <ProjectDetail user={user} project={openProj} onBack={()=>setOpenProj(null)} showToast={showToast}/>
         : tab==='dashboard' ? <Dashboard user={user} showToast={showToast} onOpen={setOpenProj}/>
         : tab==='employee' ? <EmployeeView user={user} showToast={showToast}/>
+        : tab==='matrix' ? <StaffMatrixView user={user} showToast={showToast}/>
         : null}
       {toastNode}
     </div>
