@@ -2331,6 +2331,7 @@ function EmployeeView({user,showToast}){
   const [rows,setRows] = useState(null);
   const [modal,setModal] = useState(null);
   const [q,setQ] = useState('');
+  const [showLeft,setShowLeft] = useState(false); // 퇴사자 포함 여부
 
   async function load(){
     const {data} = await sb.from('employees').select('*').order('name');
@@ -2339,11 +2340,17 @@ function EmployeeView({user,showToast}){
   useEffect(()=>{ load(); },[]);
 
   const filtered = useMemo(()=>{
-    const list=rows||[];
-    if(!q.trim()) return list;
-    const s=q.trim().toLowerCase();
-    return list.filter(e=>[e.name,e.position,e.department,e.category].some(v=>String(v||'').toLowerCase().includes(s)));
-  },[rows,q]);
+    let list=rows||[];
+    if(!showLeft) list=list.filter(e=>!e.leave_date);       // 재직자만 (퇴사일 없음)
+    if(q.trim()){
+      const s=q.trim().toLowerCase();
+      list=list.filter(e=>[e.name,e.position,e.department,e.category].some(v=>String(v||'').toLowerCase().includes(s)));
+    }
+    return list;
+  },[rows,q,showLeft]);
+
+  const activeCount = useMemo(()=>(rows||[]).filter(e=>!e.leave_date).length,[rows]);
+  const leftCount   = useMemo(()=>(rows||[]).filter(e=>e.leave_date).length,[rows]);
 
   async function saveEmp(payload){
     if(modal==='new'){
@@ -2381,7 +2388,14 @@ function EmployeeView({user,showToast}){
       <div className="card" style={{overflow:'hidden'}}>
         <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',
           justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-          <span style={{fontSize:14,fontWeight:700}}>직원 목록 · {(rows||[]).length}명</span>
+          <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+            <span style={{fontSize:14,fontWeight:700}}>직원 목록 · {filtered.length}명</span>
+            <label style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,color:'var(--text-sub)',cursor:'pointer'}}>
+              <input type="checkbox" checked={showLeft} onChange={e=>setShowLeft(e.target.checked)}
+                style={{width:16,height:16,accentColor:'var(--brand)',cursor:'pointer'}}/>
+              퇴사자 포함 <span style={{color:'var(--text-muted)',fontSize:12}}>(재직 {activeCount} · 퇴사 {leftCount})</span>
+            </label>
+          </div>
           <input value={q} onChange={e=>setQ(e.target.value)} placeholder="이름·직급·부서 검색"
             style={{maxWidth:240}}/>
         </div>
@@ -2395,7 +2409,7 @@ function EmployeeView({user,showToast}){
             {!q && <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>"직원 추가"로 시작하세요.</div>}
           </div>
         ) : (
-          <div style={{overflow:'auto',maxHeight:'calc(100vh - 260px)'}}>
+          <div style={{overflow:'auto',maxHeight:'calc(100vh - 200px)'}}>
             <table className="tbl tbl-sticky">
               <thead><tr>
                 <th>이름</th><th>직급</th><th>부서</th><th style={{textAlign:'center'}}>구분</th>
@@ -2437,6 +2451,9 @@ function StaffMatrixView({user,showToast}){
   const [year,setYear]     = useState(new Date().getFullYear());
   const [selMonth,setSelMonth] = useState(new Date().getMonth()); // 0~11
   const [openRow,setOpenRow] = useState(null);
+  const [editKey,setEditKey] = useState(null); // `${allocId}:${ym}`
+  const [editVal,setEditVal] = useState('');
+  const [saving,setSaving] = useState(false);
 
   const MONTHS_LABEL=['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 
@@ -2459,6 +2476,30 @@ function StaffMatrixView({user,showToast}){
 
   const empById = id => (emps||[]).find(e=>String(e.id)===String(id));
   const ymOf = mi => year+'-'+String(mi+1).padStart(2,'0');
+
+  // 매트릭스에서 참여율 직접 수정 → staff_rates 갱신 (인력 배정·인건비 계상과 동일 데이터라 자동 반영)
+  async function saveRate(allocId, ym){
+    const pctNum = Math.max(0, parseFloat(editVal)||0);
+    const rate = pctNum/100;
+    setSaving(true);
+    let error;
+    if(rate<=0){
+      ({error} = await sb.from('staff_rates').delete().eq('allocation_id',allocId).eq('ym',ym));
+    }else{
+      ({error} = await sb.from('staff_rates').upsert({allocation_id:allocId, ym, rate},{onConflict:'allocation_id,ym'}));
+    }
+    setSaving(false); setEditKey(null); setEditVal('');
+    if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+    audit(user,'UPDATE','staff_rates',`배정 ${allocId} · ${ym} · ${pctNum}%`);
+    showToast('참여율이 수정되었습니다 (인력 배정에도 반영됨)');
+    // 로컬 상태 즉시 반영 후 재로딩
+    setRatesByAlloc(prev=>{
+      const next={...prev}; const rm={...(next[allocId]||{})};
+      if(rate<=0) delete rm[ym]; else rm[ym]=rate;
+      next[allocId]=rm; return next;
+    });
+    load();
+  }
 
   const years = useMemo(()=>{
     const set=new Set();
@@ -2546,16 +2587,19 @@ function StaffMatrixView({user,showToast}){
             <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>과제 상세 → 수행·집행 → 인력 배정에서 먼저 배정하세요.</div>
           </div>
         ) : (
-          <div style={{overflowX:'auto'}}>
-            <table className="tbl" style={{minWidth:1000}}>
+          <div style={{overflow:'auto',maxHeight:'calc(100vh - 300px)'}}>
+            <table className="tbl tbl-sticky" style={{minWidth:1000}}>
               <thead><tr>
-                <th style={{position:'sticky',left:0,background:'var(--card-2)',zIndex:2,minWidth:100}}>성명</th>
+                <th style={{position:'sticky',left:0,background:'var(--card-2)',zIndex:7,minWidth:100}}>성명</th>
                 <th style={{textAlign:'center',minWidth:52}}>구분</th>
                 <th style={{minWidth:64}}>직위</th>
                 <th style={{textAlign:'right',minWidth:90}}>월급여</th>
                 {MONTHS_LABEL.map((m,i)=>(
                   <th key={i} style={{textAlign:'center',minWidth:56,
-                    color:i===selMonth?'var(--brand)':'',background:i===selMonth?'rgba(249,115,22,.06)':''}}>{m}</th>
+                    color:i===selMonth?'var(--brand)':'',background:i===selMonth?'rgba(249,115,22,.12)':'',
+                    borderLeft:i===selMonth?'2px solid var(--brand)':'',
+                    borderRight:i===selMonth?'2px solid var(--brand)':'',
+                    borderTop:i===selMonth?'2px solid var(--brand)':''}}>{m}</th>
                 ))}
                 <th style={{textAlign:'center',minWidth:56}}>합계율</th>
                 <th style={{textAlign:'center',minWidth:56}}>잔여율</th>
@@ -2575,7 +2619,7 @@ function StaffMatrixView({user,showToast}){
                   return (
                     <React.Fragment key={ri}>
                       <tr style={{background:isOpen?'rgba(249,115,22,.03)':'transparent'}}>
-                        <td style={{position:'sticky',left:0,background:isOpen?'var(--highlight)':'var(--card)',fontWeight:700,cursor:'pointer'}}
+                        <td style={{position:'sticky',left:0,zIndex:1,background:isOpen?'var(--highlight)':'var(--card)',fontWeight:700,cursor:'pointer'}}
                           onClick={()=>setOpenRow(isOpen?null:ri)}>
                           <span style={{color:'var(--brand)',display:'inline-flex',alignItems:'center',gap:4}}>
                             <i className={"ti ti-chevron-"+(isOpen?'down':'right')} style={{fontSize:12}}/>{p.emp.name}</span>
@@ -2586,7 +2630,8 @@ function StaffMatrixView({user,showToast}){
                         {totals.map((t,mi)=>{
                           const cost=calcCost(p.emp.monthly_salary,t); const s=getSt(t); const isSel=mi===selMonth;
                           return (
-                            <td key={mi} style={{textAlign:'center',padding:'6px 4px',background:isSel?'rgba(249,115,22,.05)':''}}>
+                            <td key={mi} style={{textAlign:'center',padding:'6px 4px',background:isSel?'rgba(249,115,22,.10)':'',
+                              borderLeft:isSel?'2px solid var(--brand)':'',borderRight:isSel?'2px solid var(--brand)':''}}>
                               <div style={{borderRadius:6,padding:'3px 4px',background:t>0?s.bg:'',display:'inline-block',minWidth:48}}>
                                 <div style={{fontSize:12,fontWeight:t>0?700:400,color:t>0?s.color:'#cbd5e1'}}>{t>0?t+'%':'—'}</div>
                                 {t>0 && <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{fmt(fmtSalary(cost))}</div>}
@@ -2611,22 +2656,41 @@ function StaffMatrixView({user,showToast}){
                                   <th style={{padding:'6px 10px',textAlign:'left',minWidth:120,borderBottom:'1px solid var(--border)'}}>과제</th>
                                   {MONTHS_LABEL.map((m,i)=>(
                                     <th key={i} style={{padding:'6px 4px',textAlign:'center',minWidth:56,borderBottom:'1px solid var(--border)',
-                                      color:i===selMonth?'var(--brand)':'var(--text-sub)',background:i===selMonth?'rgba(249,115,22,.06)':''}}>{m}</th>
+                                      color:i===selMonth?'var(--brand)':'var(--text-sub)',background:i===selMonth?'rgba(249,115,22,.12)':'',
+                                      borderLeft:i===selMonth?'2px solid var(--brand)':'',borderRight:i===selMonth?'2px solid var(--brand)':'',
+                                      borderTop:i===selMonth?'2px solid var(--brand)':''}}>{m}</th>
                                   ))}
                                   <th style={{padding:'6px 10px',textAlign:'right',minWidth:90,borderBottom:'1px solid var(--border)'}}>연간합계</th>
                                 </tr></thead>
                                 <tbody>
                                   {Object.keys(byProj).map(pid=>{
                                     let annual=0;
+                                    const allocList=byProj[pid];
+                                    const single=allocList.length===1;
+                                    const allocId=single?allocList[0].id:null;
                                     const cells=MONTHS_LABEL.map((_,mi)=>{
-                                      const r=projRate(byProj[pid],mi); const cost=calcCost(p.emp.monthly_salary,r); annual+=cost;
-                                      const bg=r>0?(r>=80?'rgba(239,68,68,.08)':r>=50?'rgba(245,158,11,.08)':'rgba(16,185,129,.08)'):'';
+                                      const r=projRate(allocList,mi); const cost=calcCost(p.emp.monthly_salary,r); annual+=cost;
+                                      const bg=r>0?(r>=80?'rgba(239,68,68,.10)':r>=50?'rgba(245,158,11,.10)':'rgba(16,185,129,.10)'):'';
+                                      const ym=ymOf(mi); const isSel=mi===selMonth;
+                                      const key=allocId+':'+ym; const editing=editKey===key;
                                       return (
-                                        <td key={mi} style={{padding:'3px 3px',textAlign:'center',background:mi===selMonth?'rgba(249,115,22,.04)':''}}>
-                                          <div style={{borderRadius:4,padding:'3px 4px',background:bg,display:'inline-block',minWidth:50}}>
-                                            <div style={{fontWeight:r>0?600:400,color:r>0?'var(--text)':'#64748b'}}>{r>0?r+'%':'—'}</div>
-                                            {r>0 && <div style={{fontSize:9,color:'var(--text-muted)'}}>{fmt(fmtSalary(cost))}</div>}
-                                          </div>
+                                        <td key={mi} style={{padding:'3px 3px',textAlign:'center',background:isSel?'rgba(249,115,22,.06)':'',
+                                          borderLeft:isSel?'2px solid var(--brand)':'',borderRight:isSel?'2px solid var(--brand)':''}}>
+                                          {editing ? (
+                                            <input autoFocus value={editVal} disabled={saving}
+                                              onChange={e=>setEditVal(e.target.value.replace(/[^0-9.]/g,''))}
+                                              onKeyDown={e=>{ if(e.key==='Enter') saveRate(allocId,ym); if(e.key==='Escape'){setEditKey(null);setEditVal('');} }}
+                                              onBlur={()=>saveRate(allocId,ym)}
+                                              style={{width:52,padding:'3px 4px',textAlign:'center',fontSize:11}}/>
+                                          ) : (
+                                            <div title={single?'클릭하여 참여율 수정':'복수 배정 — 인력 배정에서 수정'}
+                                              onClick={()=>{ if(single){ setEditKey(key); setEditVal(String(r)); } }}
+                                              style={{borderRadius:4,padding:'3px 4px',background:bg,display:'inline-block',minWidth:50,
+                                                cursor:single?'pointer':'default'}}>
+                                              <div style={{fontWeight:r>0?600:400,color:r>0?'var(--text)':'#64748b'}}>{r>0?r+'%':'—'}</div>
+                                              {r>0 && <div style={{fontSize:9,color:'var(--text-muted)'}}>{fmt(fmtSalary(cost))}</div>}
+                                            </div>
+                                          )}
                                         </td>
                                       );
                                     });
@@ -2655,8 +2719,7 @@ function StaffMatrixView({user,showToast}){
         )}
       </div>
       <div style={{fontSize:11,color:'var(--text-muted)',marginTop:10}}>
-        성명을 클릭하면 과제별 상세가 펼쳐집니다. 월을 선택하면 합계율·잔여율·총인건비·상태가 그 달 기준으로 표시됩니다. · 인건비는 천원 단위 절사.
-        참여율 편집은 과제 상세 → 수행·집행 → 인력 배정에서 합니다.
+        성명을 클릭하면 과제별 상세가 펼쳐집니다. 펼친 뒤 <b style={{color:'var(--brand)'}}>과제별 셀을 클릭하면 참여율을 바로 수정</b>할 수 있고, 수정 내용은 인력 배정·인건비 계상에 함께 반영됩니다. · 인건비는 천원 단위 절사.
       </div>
     </main>
   );
