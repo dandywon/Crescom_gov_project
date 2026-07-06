@@ -230,11 +230,11 @@ function ProjectModal({user,editItem,onClose,onSaved,showToast}){
           <div><label className="form-label">협약 종료일</label>
             <input type="date" value={f.period_end} onChange={e=>set('period_end',e.target.value)}/></div>
           <div><label className="form-label">정부지원금</label>
-            <input inputMode="numeric" value={f.govt_budget} onChange={e=>set('govt_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.govt_budget} onChange={v=>set('govt_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">자부담 현금</label>
-            <input inputMode="numeric" value={f.cash_budget} onChange={e=>set('cash_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.cash_budget} onChange={v=>set('cash_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">자부담 현물</label>
-            <input inputMode="numeric" value={f.kind_budget} onChange={e=>set('kind_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.kind_budget} onChange={v=>set('kind_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">총사업비 (자동)</label>
             <div style={{padding:'9px 12px',background:'rgba(249,115,22,.08)',borderRadius:8,
               border:'1px solid rgba(249,115,22,.2)',fontWeight:800,color:'var(--brand)'}}>{fmt(total)}원</div></div>
@@ -438,16 +438,16 @@ function YearModal({year,onClose,onSave}){
           <div><label className="form-label">종료일</label>
             <input type="date" value={f.end_date} onChange={e=>set('end_date',e.target.value)}/></div>
           <div><label className="form-label">정부출연금</label>
-            <input inputMode="numeric" value={f.govt_budget} onChange={e=>set('govt_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.govt_budget} onChange={v=>set('govt_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">자부담 현금</label>
-            <input inputMode="numeric" value={f.cash_budget} onChange={e=>set('cash_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.cash_budget} onChange={v=>set('cash_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">자부담 현물</label>
-            <input inputMode="numeric" value={f.kind_budget} onChange={e=>set('kind_budget',e.target.value)} placeholder="0"/></div>
+            <MoneyInput value={f.kind_budget} onChange={v=>set('kind_budget',v)} placeholder="0"/></div>
           <div><label className="form-label">예산합계 (자동)</label>
             <div style={{padding:'9px 12px',background:'rgba(249,115,22,.08)',borderRadius:8,
               border:'1px solid rgba(249,115,22,.2)',fontWeight:800,color:'var(--brand)'}}>{fmt(total)}원</div></div>
           <div style={{gridColumn:'1 / span 2'}}><label className="form-label">이월금</label>
-            <input inputMode="numeric" value={f.carry_over} onChange={e=>set('carry_over',e.target.value)} placeholder="전 연차에서 이월된 금액 (없으면 0)"/></div>
+            <MoneyInput value={f.carry_over} onChange={v=>set('carry_over',v)} placeholder="전 연차에서 이월된 금액 (없으면 0)"/></div>
           <div style={{gridColumn:'1 / span 2'}}><label className="form-label">비고</label>
             <textarea value={f.note} onChange={e=>set('note',e.target.value)} rows={2} placeholder="특이사항"/></div>
         </div>
@@ -618,10 +618,156 @@ function YearManager({user,proj,showToast}){
   );
 }
 
+/* ================= 금액 입력칸 (콤마 자동 표시) ================= */
+function MoneyInput({value,onChange,placeholder,style}){
+  const comma = v => { const raw=String(v??'').replace(/[^0-9]/g,''); return raw?Number(raw).toLocaleString('ko-KR'):''; };
+  return <input inputMode="numeric" style={style} value={comma(value)}
+    onChange={e=>onChange(e.target.value.replace(/[^0-9]/g,''))} placeholder={placeholder}/>;
+}
+
+/* ================= 사업비 계산기 (등록·설정 탭 내용 2) — 원본 GAS 로직과 동일 ================= */
+function BudgetCalculator({user,proj,onSaved,showToast}){
+  // 콤마 유틸
+  const toNum   = s => Number(String(s).replace(/,/g,''))||0;
+  const toComma = v => { if(v===''||v==null) return ''; const num=Number(String(v).replace(/,/g,'')); if(isNaN(num)||num===0) return ''; return num.toLocaleString('ko-KR'); };
+
+  const [govt,setGovt]       = useState('');
+  const [cashPct,setCashPct] = useState('');
+  const [kindPct,setKindPct] = useState('');
+  const [cashAmt,setCashAmt] = useState('');
+  const [kindAmt,setKindAmt] = useState('');
+  const [saving,setSaving]   = useState(false);
+
+  // 진입 시 과제의 기존 예산 불러오기 → 비율 역산 (총사업비 기준)
+  useEffect(()=>{
+    const g=Number(proj.govt_budget)||0, c=Number(proj.cash_budget)||0, k=Number(proj.kind_budget)||0;
+    const total=g+c+k;
+    setGovt(toComma(g)); setCashAmt(toComma(c)); setKindAmt(toComma(k));
+    if(total>0){ setCashPct((c/total*100).toFixed(1)); setKindPct((k/total*100).toFixed(1)); }
+    else { setCashPct(''); setKindPct(''); }
+  },[proj.id]);
+
+  // 비율 입력 → 금액 자동 (총사업비 = 정부지원금 / (1 - 자부담비율합))
+  const calcFromPct = (field,val) => {
+    const cp = field==='cash' ? (parseFloat(val)||0) : (parseFloat(cashPct)||0);
+    const kp = field==='kind' ? (parseFloat(val)||0) : (parseFloat(kindPct)||0);
+    if(field==='cash') setCashPct(val);
+    if(field==='kind') setKindPct(val);
+    const g = toNum(govt); if(!g) return;
+    const instPct = (cp+kp)/100;
+    if(instPct>=1){ setCashAmt(''); setKindAmt(''); return; }
+    const total = g/(1-instPct);
+    setCashAmt(toComma(Math.round(total*cp/100)));
+    setKindAmt(toComma(Math.round(total*kp/100)));
+  };
+
+  // 금액 입력 → 비율 자동 (총사업비 대비)
+  const calcFromAmt = (field,val) => {
+    const formatted = val ? Number(val.replace(/[^0-9]/g,'')).toLocaleString('ko-KR') : '';
+    if(field==='cash') setCashAmt(formatted);
+    if(field==='kind') setKindAmt(formatted);
+    const g = toNum(govt);
+    const c = field==='cash' ? toNum(formatted) : toNum(cashAmt);
+    const k = field==='kind' ? toNum(formatted) : toNum(kindAmt);
+    const total = g+c+k;
+    if(total>0){ setCashPct((c/total*100).toFixed(1)); setKindPct((k/total*100).toFixed(1)); }
+  };
+
+  // 정부지원금 변경 → 비율 유지하며 금액 재계산
+  const handleGovtChange = (val) => {
+    const formatted = val ? Number(val.replace(/[^0-9]/g,'')).toLocaleString('ko-KR') : '';
+    setGovt(formatted);
+    const g = toNum(formatted);
+    const cp = parseFloat(cashPct)||0, kp = parseFloat(kindPct)||0;
+    if(!g||!(cp+kp)) return;
+    const instPct=(cp+kp)/100; if(instPct>=1) return;
+    const total=g/(1-instPct);
+    setCashAmt(toComma(Math.round(total*cp/100)));
+    setKindAmt(toComma(Math.round(total*kp/100)));
+  };
+
+  // 결과
+  const g=toNum(govt), c=toNum(cashAmt), k=toNum(kindAmt);
+  const total=g+c+k;
+  const govtPct = total>0 ? g/total*100 : 0;
+  const cPct    = total>0 ? c/total*100 : 0;
+  const kPct    = total>0 ? k/total*100 : 0;
+  const instPct = cPct+kPct;
+  const isOverInst = instPct>=100;
+  const fmt2 = num => Math.round(num).toLocaleString('ko-KR');
+
+  async function apply(){
+    if(!g){ showToast('정부지원금을 입력하세요','err'); return; }
+    if(isOverInst){ showToast('자부담 비율 합계가 100% 이상입니다','err'); return; }
+    setSaving(true);
+    const {error} = await sb.from('projects').update({
+      govt_budget:g, cash_budget:c, kind_budget:k, total_budget:total,
+      updated_at:new Date().toISOString() }).eq('id',proj.id);
+    setSaving(false);
+    if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+    audit(user,'BUDGET_CALC',proj.id,`총 ${fmt(total)} / 자부담 ${fmt(c+k)}`);
+    showToast('사업비가 저장되었습니다'); onSaved();
+  }
+
+  const Result = ({label,value,pct,strong}) => (
+    <div style={{padding:'12px 14px',background:strong?'rgba(249,115,22,.08)':'#f8fafc',
+      borderRadius:8,border:'1px solid '+(strong?'rgba(249,115,22,.2)':'var(--border)')}}>
+      <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>{label}{pct!=null?` · ${pct.toFixed(1)}%`:''}</div>
+      <div style={{fontSize:16,fontWeight:800,color:strong?'var(--brand)':'var(--text)'}}>{fmt2(value)}원</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="card" style={{padding:22,marginBottom:16}}>
+        <div style={{fontSize:15,fontWeight:800,marginBottom:4}}>사업비 계산기</div>
+        <div style={{fontSize:12,color:'var(--text-sub)',marginBottom:18}}>
+          자부담현금·현물 비율은 <b>총사업비 기준</b>입니다. 비율을 넣으면 금액이, 금액을 넣으면 비율이 자동 계산됩니다. (총사업비 = 정부지원금 ÷ (1 − 자부담비율합))
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}>
+          <div><label className="form-label">정부지원금</label>
+            <input inputMode="numeric" value={govt} onChange={e=>handleGovtChange(e.target.value)} placeholder="0"/></div>
+          <div><label className="form-label">자부담현금 비율 (%)</label>
+            <input inputMode="numeric" value={cashPct} onChange={e=>calcFromPct('cash',e.target.value)} placeholder="예: 15"/></div>
+          <div><label className="form-label">자부담현물 비율 (%)</label>
+            <input inputMode="numeric" value={kindPct} onChange={e=>calcFromPct('kind',e.target.value)} placeholder="예: 10"/></div>
+          <div><label className="form-label">자부담현금 금액</label>
+            <input inputMode="numeric" value={cashAmt} onChange={e=>calcFromAmt('cash',e.target.value)} placeholder="0"/></div>
+          <div><label className="form-label">자부담현물 금액</label>
+            <input inputMode="numeric" value={kindAmt} onChange={e=>calcFromAmt('kind',e.target.value)} placeholder="0"/></div>
+        </div>
+      </div>
+
+      <div className="card" style={{padding:22,marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:14,color:'var(--text-sub)'}}>계산 결과</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:12}}>
+          <Result label="정부지원금" value={g} pct={total>0?govtPct:null}/>
+          <Result label="자부담현금" value={c} pct={total>0?cPct:null}/>
+          <Result label="자부담현물" value={k} pct={total>0?kPct:null}/>
+        </div>
+        <Result label="총사업비" value={total} strong/>
+        {isOverInst && (
+          <div style={{marginTop:12,padding:'10px 14px',borderRadius:8,fontSize:13,
+            background:'rgba(239,68,68,.1)',color:'#ef4444'}}>자부담 비율 합계가 100% 이상입니다. 비율을 확인하세요.</div>
+        )}
+        <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}>
+          <button className="btn btn-brand" onClick={apply} disabled={saving}>{saving?'저장 중...':'이 과제에 적용'}</button>
+        </div>
+      </div>
+
+      <div className="card" style={{padding:'14px 18px',fontSize:12,color:'var(--text-sub)'}}>
+        <i className="ti ti-database" style={{marginRight:6,color:'var(--brand)'}}/>
+        현재 저장된 예산 — 정부 <b>{fmt(proj.govt_budget)}</b> · 현금 <b>{fmt(proj.cash_budget)}</b> · 현물 <b>{fmt(proj.kind_budget)}</b> · 총 <b>{fmt(proj.total_budget)}</b>원
+      </div>
+    </div>
+  );
+}
+
 /* ================= 과제 상세 페이지 ================= */
 function ProjectDetail({user,project,onBack,showToast}){
   const [proj,setProj] = useState(project);
   const [ptab,setPtab] = useState('setup'); // prepare/setup/execute/settle
+  const [setupTab,setSetupTab] = useState('calc'); // calc/years
   const [modal,setModal] = useState(false);
 
   async function reload(){
@@ -689,7 +835,18 @@ function ProjectDetail({user,project,onBack,showToast}){
 
       {/* 탭 내용 (Phase 2-1은 뼈대만; 다음 단계에서 채움) */}
       {ptab==='prepare' && placeholder('Phase 1 · 준비','과제 준비 단계 정보가 여기 들어갑니다.')}
-      {ptab==='setup'   && <YearManager user={user} proj={proj} showToast={showToast}/>}
+      {ptab==='setup' && (
+        <div>
+          <div style={{display:'flex',gap:8,marginBottom:18}}>
+            <button className={"btn btn-sm "+(setupTab==='calc'?'btn-brand':'btn-ghost')} onClick={()=>setSetupTab('calc')}>
+              <i className="ti ti-calculator"/> 사업비 계산기</button>
+            <button className={"btn btn-sm "+(setupTab==='years'?'btn-brand':'btn-ghost')} onClick={()=>setSetupTab('years')}>
+              <i className="ti ti-calendar-stats"/> 연차 관리</button>
+          </div>
+          {setupTab==='calc'  && <BudgetCalculator user={user} proj={proj} onSaved={reload} showToast={showToast}/>}
+          {setupTab==='years' && <YearManager user={user} proj={proj} showToast={showToast}/>}
+        </div>
+      )}
       {ptab==='execute' && placeholder('Phase 3 · 수행·집행','집행 입력 · 인건비 · 현물이 추가됩니다.')}
       {ptab==='settle'  && placeholder('Phase 4 · 정산·보고','연차별 집행률 · 잔액 · 증빙 점검 · 엑셀 내보내기가 추가됩니다.')}
 
