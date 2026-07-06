@@ -14,15 +14,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --navy:#1e293b; --navy-2:#0f172a;
+    --navy:#141c2b; --navy-2:#0f172a;
     --brand:#f97316; --brand-dark:#ea580c;
-    --bg:#f8fafc; --card:#ffffff; --border:#e2e8f0;
-    --text:#111827; --text-sub:#475569; --text-muted:#94a3b8;
+    --bg:#1a2334; --card:#222d42; --border:#33415a;
+    --input:#1c2638; --card-2:#1c2638; --row-hover:#283449; --highlight:#26314a;
+    --text:#eef2f8; --text-sub:#aab6c8; --text-muted:#8f9cb0;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Inter',-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
-  input,select,textarea{width:100%;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;
-    font-size:14px;background:#fff;color:var(--text);outline:none;font-family:inherit;transition:border .15s}
+  input,select,textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;
+    font-size:14px;background:var(--input);color:var(--text);outline:none;font-family:inherit;transition:border .15s}
   textarea{resize:vertical;min-height:56px}
   input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(249,115,22,.12)}
   .btn{border:none;cursor:pointer;border-radius:8px;font-weight:600;font-family:inherit;
@@ -30,14 +31,14 @@
   .btn-brand{background:var(--brand);color:#fff}
   .btn-brand:hover{background:var(--brand-dark)}
   .btn-brand:disabled{opacity:.6;cursor:default}
-  .btn-ghost{background:#fff;border:1px solid var(--border);color:var(--text-sub)}
-  .btn-ghost:hover{background:var(--bg)}
+  .btn-ghost{background:var(--card);border:1px solid var(--border);color:var(--text-sub)}
+  .btn-ghost:hover{background:var(--row-hover)}
   .btn-sm{padding:6px 10px;font-size:12px}
   .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
-    box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    box-shadow:0 1px 3px rgba(0,0,0,.25)}
   .sidebar-item{padding:9px 12px;border-radius:8px;cursor:pointer;display:flex;align-items:center;
-    gap:10px;font-size:13px;font-weight:500;color:#94a3b8;transition:all .15s}
-  .sidebar-item:hover{background:rgba(255,255,255,.08);color:#e2e8f0}
+    gap:10px;font-size:13px;font-weight:500;color:#ffffff;transition:all .15s}
+  .sidebar-item:hover{background:rgba(255,255,255,.10);color:#ffffff}
   .sidebar-item.active{background:rgba(249,115,22,.15);color:var(--brand)}
   .sidebar-item i{font-size:17px}
   .grp-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;
@@ -46,15 +47,15 @@
     border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;
-    position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+    position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.25)}
   .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--brand)}
   .tbl{width:100%;border-collapse:collapse;font-size:13px}
   .tbl th{padding:10px 14px;text-align:left;color:var(--text-sub);border-bottom:1px solid var(--border);
-    font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:#f9fafb;
+    font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:var(--card-2);
     white-space:nowrap;cursor:pointer;user-select:none}
   .tbl th:hover{color:var(--brand)}
-  .tbl td{padding:12px 14px;border-bottom:1px solid #f3f4f6;color:var(--text)}
-  .tbl tr:hover td{background:#f9fafb}
+  .tbl td{padding:12px 14px;border-bottom:1px solid #2e3a4f;color:var(--text)}
+  .tbl tr:hover td{background:var(--row-hover)}
   .row-click{cursor:pointer}
   .badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px}
   .b-준비{background:#f1f5f9;color:#475569}
@@ -2378,14 +2379,17 @@ function EmployeeView({user,showToast}){
   );
 }
 
-/* ================= 참여율 현황 매트릭스 (공통) ================= */
+/* ================= 참여율 현황 매트릭스 (v1 동일 구현) ================= */
 function StaffMatrixView({user,showToast}){
   const [emps,setEmps]     = useState(null);
   const [allocs,setAllocs] = useState([]);
   const [ratesByAlloc,setRatesByAlloc] = useState({});
   const [projMap,setProjMap] = useState({});
   const [year,setYear]     = useState(new Date().getFullYear());
-  const [open,setOpen]     = useState(null); // 펼친 직원 id
+  const [selMonth,setSelMonth] = useState(new Date().getMonth()); // 0~11
+  const [openRow,setOpenRow] = useState(null);
+
+  const MONTHS_LABEL=['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 
   async function load(){
     const [{data:e},{data:a},{data:p}] = await Promise.all([
@@ -2405,10 +2409,8 @@ function StaffMatrixView({user,showToast}){
   useEffect(()=>{ load(); },[]);
 
   const empById = id => (emps||[]).find(e=>String(e.id)===String(id));
-  const MM = m => String(m).padStart(2,'0');
-  const ymOf = m => year+'-'+MM(m);
+  const ymOf = mi => year+'-'+String(mi+1).padStart(2,'0');
 
-  // 연도 후보
   const years = useMemo(()=>{
     const set=new Set();
     Object.values(ratesByAlloc).forEach(rm=>Object.keys(rm).forEach(ym=>set.add(Number(ym.slice(0,4)))));
@@ -2427,30 +2429,30 @@ function StaffMatrixView({user,showToast}){
     return Object.values(map).sort((x,y)=>String(x.emp.name).localeCompare(String(y.emp.name)));
   },[allocs,emps]);
 
-  // 인원 × 월 합계 (해당 연도)
-  const monthTotal = (person,m) => person.allocs.reduce((s,a)=>{
-    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(m)]||0); },0);
-  // 인원 × 과제 × 월
-  const projMonth = (allocList,m) => allocList.reduce((s,a)=>{
-    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(m)]||0); },0);
+  // 참여율(%) — 인원×월 합계 (전체 과제)
+  const monthTotal = (person,mi) => Math.round(person.allocs.reduce((s,a)=>{
+    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(mi)]||0); },0)*100);
+  // 인원×과제×월 (%)
+  const projRate = (allocList,mi) => Math.round(allocList.reduce((s,a)=>{
+    const rm=ratesByAlloc[a.id]||{}; return s+(rm[ymOf(mi)]||0); },0)*100);
 
-  const st = pct => pct>100 ? {c:'#ef4444',t:'초과'} : pct>=80 ? {c:'#f59e0b',t:'주의'} : pct>0 ? {c:'#10b981',t:'정상'} : {c:'#cbd5e1',t:'—'};
+  // 천원 절사
+  const fmtSalary = num => Math.floor((Number(num)||0)/1000)*1000;
+  const calcCost = (salary,ratePct) => Math.floor((Number(salary)||0)*(ratePct/100)/1000)*1000;
 
-  // 이 연도에 100% 초과가 한 번이라도 있는 인원
-  const overList = useMemo(()=>{
-    return people.filter(p=>[1,2,3,4,5,6,7,8,9,10,11,12].some(m=>Math.round(monthTotal(p,m)*100)>100))
-      .map(p=>p.emp.name);
-  },[people,ratesByAlloc,year]);
-
-  const cell = (pct,strong) => {
-    const v=Math.round(pct*100);
-    const s=st(v);
-    return <span style={{fontWeight:v>0?700:400,color:v>0?s.c:'#cbd5e1'}}>{v>0?v+'%':'—'}{strong&&v>100?' ⚠':''}</span>;
+  const getSt = total => {
+    if(total>100) return {color:'#ef4444',bg:'rgba(239,68,68,.10)',text:'초과',badge:'b-탈락'};
+    if(total>=80) return {color:'#d97706',bg:'rgba(245,158,11,.10)',text:'주의',badge:'b-신청'};
+    if(total>0)   return {color:'#059669',bg:'rgba(16,185,129,.10)',text:'정상',badge:'b-수행'};
+    return {color:'#94a3b8',bg:'',text:'미배부',badge:'b-준비'};
   };
+
+  const overList = useMemo(()=>people.filter(p=>[0,1,2,3,4,5,6,7,8,9,10,11].some(mi=>monthTotal(p,mi)>100)).map(p=>p.emp.name),
+    [people,ratesByAlloc,year]);
 
   return (
     <main style={{flex:1,padding:32,overflow:'auto'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24,flexWrap:'wrap',gap:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:18,flexWrap:'wrap',gap:12}}>
         <div>
           <h1 style={{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}}>참여율 현황</h1>
           <div style={{fontSize:13,color:'var(--text-sub)',marginTop:4}}>전 직원 × 월별 참여율 (전체 과제 합산) · 100% 초과 경고</div>
@@ -2460,14 +2462,30 @@ function StaffMatrixView({user,showToast}){
         </select>
       </div>
 
-      {/* 초과 경고 */}
       {overList.length>0 && (
-        <div className="card" style={{padding:'12px 16px',marginBottom:16,borderLeft:'3px solid #ef4444',
-          background:'rgba(239,68,68,.05)'}}>
+        <div className="card" style={{padding:'12px 16px',marginBottom:14,borderLeft:'3px solid #ef4444',background:'rgba(239,68,68,.05)'}}>
           <span style={{fontWeight:700,color:'#ef4444'}}><i className="ti ti-alert-triangle"/> 참여율 초과 </span>
           <span style={{fontSize:13,color:'var(--text-sub)'}}>{year}년 중 월 합산 100% 초과: {overList.join(', ')}</span>
         </div>
       )}
+
+      {/* 범례 */}
+      <div style={{display:'flex',gap:14,alignItems:'center',fontSize:11,color:'var(--text-muted)',flexWrap:'wrap',marginBottom:12}}>
+        {[['#ef4444','초과(100%↑)'],['#d97706','주의(80%↑)'],['#059669','정상'],['#94a3b8','미배부']].map(([c,t])=>(
+          <span key={t}><span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:c,marginRight:5,verticalAlign:'middle'}}/>{t}</span>
+        ))}
+      </div>
+
+      {/* 월 선택 */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:16}}>
+        {MONTHS_LABEL.map((m,i)=>(
+          <button key={i} onClick={()=>setSelMonth(i)}
+            style={{fontSize:12,padding:'5px 12px',borderRadius:99,cursor:'pointer',fontFamily:'inherit',
+              border:i===selMonth?'none':'1px solid var(--border)',
+              background:i===selMonth?'var(--brand)':'#fff',
+              color:i===selMonth?'#fff':'var(--text-sub)',fontWeight:i===selMonth?700:500}}>{m}</button>
+        ))}
+      </div>
 
       <div className="card" style={{overflow:'hidden'}}>
         {emps===null ? (
@@ -2480,44 +2498,105 @@ function StaffMatrixView({user,showToast}){
           </div>
         ) : (
           <div style={{overflowX:'auto'}}>
-            <table className="tbl" style={{minWidth:820}}>
+            <table className="tbl" style={{minWidth:1000}}>
               <thead><tr>
-                <th style={{position:'sticky',left:0,background:'#f9fafb',zIndex:2,minWidth:110}}>성명</th>
-                <th style={{textAlign:'right',minWidth:90}}>월급</th>
-                {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
-                  <th key={m} style={{textAlign:'center',minWidth:44}}>{m}월</th>
+                <th style={{position:'sticky',left:0,background:'#f9fafb',zIndex:2,minWidth:100}}>성명</th>
+                <th style={{textAlign:'center',minWidth:52}}>구분</th>
+                <th style={{minWidth:64}}>직위</th>
+                <th style={{textAlign:'right',minWidth:90}}>월급여</th>
+                {MONTHS_LABEL.map((m,i)=>(
+                  <th key={i} style={{textAlign:'center',minWidth:56,
+                    color:i===selMonth?'var(--brand)':'',background:i===selMonth?'rgba(249,115,22,.06)':''}}>{m}</th>
                 ))}
+                <th style={{textAlign:'center',minWidth:56}}>합계율</th>
+                <th style={{textAlign:'center',minWidth:56}}>잔여율</th>
+                <th style={{textAlign:'right',minWidth:90}}>총인건비</th>
+                <th style={{textAlign:'center',minWidth:56}}>상태</th>
               </tr></thead>
               <tbody>
-                {people.map(p=>{
-                  const isOpen=open===p.emp.id;
+                {people.map((p,ri)=>{
+                  const isOpen=openRow===ri;
+                  const totals=MONTHS_LABEL.map((_,mi)=>monthTotal(p,mi));
+                  const selTotal=totals[selMonth];
+                  const selCost=calcCost(p.emp.monthly_salary,selTotal);
+                  const remain=Math.max(0,100-selTotal);
+                  const st=getSt(selTotal);
                   const byProj={};
                   p.allocs.forEach(a=>{ (byProj[a.project_id]=byProj[a.project_id]||[]).push(a); });
                   return (
-                    <React.Fragment key={p.emp.id}>
-                      <tr>
-                        <td style={{position:'sticky',left:0,background:'#fff',fontWeight:700,cursor:'pointer'}}
-                          onClick={()=>setOpen(isOpen?null:p.emp.id)}>
-                          <i className={"ti ti-chevron-"+(isOpen?'down':'right')} style={{fontSize:13,marginRight:4,color:'var(--brand)'}}/>
-                          {p.emp.name}
-                          {p.emp.position && <span style={{fontSize:10,color:'var(--text-muted)',fontWeight:400,marginLeft:5}}>{p.emp.position}</span>}
+                    <React.Fragment key={ri}>
+                      <tr style={{background:isOpen?'rgba(249,115,22,.03)':'transparent'}}>
+                        <td style={{position:'sticky',left:0,background:isOpen?'#fff7ed':'#fff',fontWeight:700,cursor:'pointer'}}
+                          onClick={()=>setOpenRow(isOpen?null:ri)}>
+                          <span style={{color:'var(--brand)',display:'inline-flex',alignItems:'center',gap:4}}>
+                            <i className={"ti ti-chevron-"+(isOpen?'down':'right')} style={{fontSize:12}}/>{p.emp.name}</span>
                         </td>
-                        <td style={{textAlign:'right',fontSize:12,color:'var(--text-sub)'}}>{fmt(p.emp.monthly_salary)}</td>
-                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
-                          <td key={m} style={{textAlign:'center',fontSize:12}}>{cell(monthTotal(p,m),true)}</td>
-                        ))}
+                        <td style={{textAlign:'center'}}><span className="badge b-신청">{p.emp.category||'—'}</span></td>
+                        <td style={{fontSize:12,color:'var(--text-sub)'}}>{p.emp.position||'—'}</td>
+                        <td style={{textAlign:'right',fontSize:12,color:'var(--text-sub)'}}>{p.emp.monthly_salary?fmt(p.emp.monthly_salary):'—'}</td>
+                        {totals.map((t,mi)=>{
+                          const cost=calcCost(p.emp.monthly_salary,t); const s=getSt(t); const isSel=mi===selMonth;
+                          return (
+                            <td key={mi} style={{textAlign:'center',padding:'6px 4px',background:isSel?'rgba(249,115,22,.05)':''}}>
+                              <div style={{borderRadius:6,padding:'3px 4px',background:t>0?s.bg:'',display:'inline-block',minWidth:48}}>
+                                <div style={{fontSize:12,fontWeight:t>0?700:400,color:t>0?s.color:'#cbd5e1'}}>{t>0?t+'%':'—'}</div>
+                                {t>0 && <div style={{fontSize:9,color:'var(--text-muted)',marginTop:1}}>{fmt(fmtSalary(cost))}</div>}
+                              </div>
+                            </td>
+                          );
+                        })}
+                        <td style={{textAlign:'center',fontWeight:700,color:st.color}}>{selTotal>0?selTotal+'%':'—'}</td>
+                        <td style={{textAlign:'center',fontSize:12,color:'var(--text-muted)'}}>{remain}%</td>
+                        <td style={{textAlign:'right',fontSize:12,fontWeight:600}}>{selCost>0?fmt(selCost):'—'}</td>
+                        <td style={{textAlign:'center'}}><span className={"badge "+st.badge}>{st.text}</span></td>
                       </tr>
-                      {isOpen && Object.keys(byProj).map(pid=>(
-                        <tr key={p.emp.id+'-'+pid} style={{background:'#fafbfc'}}>
-                          <td style={{position:'sticky',left:0,background:'#fafbfc',paddingLeft:28,fontSize:12,color:'var(--text-sub)'}}>
-                            {projMap[pid]?.project_code || projMap[pid]?.name || pid}
-                          </td>
-                          <td></td>
-                          {[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>(
-                            <td key={m} style={{textAlign:'center',fontSize:11,color:'var(--text-muted)'}}>{cell(projMonth(byProj[pid],m))}</td>
-                          ))}
-                        </tr>
-                      ))}
+                      {isOpen && (
+                        <tr><td colSpan={4+12+4} style={{padding:0,background:'#f9fafb'}}>
+                          <div style={{padding:'14px 16px'}}>
+                            <div style={{fontSize:12,fontWeight:700,color:'var(--text-sub)',marginBottom:10}}>
+                              <i className="ti ti-user" style={{marginRight:5}}/>{p.emp.name} — 과제별 월별 참여율 및 인건비
+                            </div>
+                            <div style={{overflowX:'auto'}}>
+                              <table style={{borderCollapse:'collapse',fontSize:11,width:'100%',minWidth:800}}>
+                                <thead><tr style={{background:'#f3f4f6'}}>
+                                  <th style={{padding:'6px 10px',textAlign:'left',minWidth:120,borderBottom:'1px solid var(--border)'}}>과제</th>
+                                  {MONTHS_LABEL.map((m,i)=>(
+                                    <th key={i} style={{padding:'6px 4px',textAlign:'center',minWidth:56,borderBottom:'1px solid var(--border)',
+                                      color:i===selMonth?'var(--brand)':'#374151',background:i===selMonth?'rgba(249,115,22,.06)':''}}>{m}</th>
+                                  ))}
+                                  <th style={{padding:'6px 10px',textAlign:'right',minWidth:90,borderBottom:'1px solid var(--border)'}}>연간합계</th>
+                                </tr></thead>
+                                <tbody>
+                                  {Object.keys(byProj).map(pid=>{
+                                    let annual=0;
+                                    const cells=MONTHS_LABEL.map((_,mi)=>{
+                                      const r=projRate(byProj[pid],mi); const cost=calcCost(p.emp.monthly_salary,r); annual+=cost;
+                                      const bg=r>0?(r>=80?'rgba(239,68,68,.08)':r>=50?'rgba(245,158,11,.08)':'rgba(16,185,129,.08)'):'';
+                                      return (
+                                        <td key={mi} style={{padding:'3px 3px',textAlign:'center',background:mi===selMonth?'rgba(249,115,22,.04)':''}}>
+                                          <div style={{borderRadius:4,padding:'3px 4px',background:bg,display:'inline-block',minWidth:50}}>
+                                            <div style={{fontWeight:r>0?600:400,color:r>0?'#111827':'#d1d5db'}}>{r>0?r+'%':'—'}</div>
+                                            {r>0 && <div style={{fontSize:9,color:'var(--text-muted)'}}>{fmt(fmtSalary(cost))}</div>}
+                                          </div>
+                                        </td>
+                                      );
+                                    });
+                                    return (
+                                      <tr key={pid} style={{borderBottom:'1px solid #eef2f6'}}>
+                                        <td style={{padding:'6px 10px'}}>
+                                          <span className="badge b-신청">{projMap[pid]?.project_code||projMap[pid]?.name||pid}</span>
+                                        </td>
+                                        {cells}
+                                        <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:'var(--brand)'}}>{fmt(annual)}원</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </td></tr>
+                      )}
                     </React.Fragment>
                   );
                 })}
@@ -2527,7 +2606,8 @@ function StaffMatrixView({user,showToast}){
         )}
       </div>
       <div style={{fontSize:11,color:'var(--text-muted)',marginTop:10}}>
-        성명을 클릭하면 과제별 참여율이 펼쳐집니다. · 색상: <b style={{color:'#10b981'}}>정상</b> / <b style={{color:'#f59e0b'}}>주의(80%↑)</b> / <b style={{color:'#ef4444'}}>초과(100%↑) ⚠</b>
+        성명을 클릭하면 과제별 상세가 펼쳐집니다. 월을 선택하면 합계율·잔여율·총인건비·상태가 그 달 기준으로 표시됩니다. · 인건비는 천원 단위 절사.
+        참여율 편집은 과제 상세 → 수행·집행 → 인력 배정에서 합니다.
       </div>
     </main>
   );
