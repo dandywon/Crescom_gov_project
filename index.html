@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -1222,6 +1223,868 @@ function StaffManager({user,proj,showToast}){
   );
 }
 
+/* ================= 집행 입력 모달 ================= */
+const PAY_METHODS = ['법인카드','계좌이체','세금계산서','현금영수증','기타'];
+function TxModal({proj,tx,onClose,onSave}){
+  const isNew = !tx;
+  const [f,setF] = useState({
+    spent_date: tx?.spent_date||'', category: tx?.category||'인건비', sub_category: tx?.sub_category||'',
+    amount_excl: tx?.amount_excl||'', amount_vat: tx?.amount_vat||'',
+    fund_type: tx?.fund_type||'gov_support', payment_method: tx?.payment_method||'법인카드',
+    vendor: tx?.vendor||'', purpose: tx?.purpose||'', evidence_url: tx?.evidence_url||'',
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const total = n(f.amount_excl)+n(f.amount_vat);
+
+  async function go(){
+    if(!f.spent_date){ setErr('지출일을 입력하세요.'); return; }
+    if(!f.purpose.trim()){ setErr('집행 목적을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      spent_date:f.spent_date, category:f.category, sub_category:f.sub_category.trim()||null,
+      amount_excl:n(f.amount_excl), amount_vat:n(f.amount_vat), amount_total:total,
+      fund_type:f.fund_type, payment_method:f.payment_method, vendor:f.vendor.trim()||null,
+      purpose:f.purpose.trim(), evidence_url:f.evidence_url.trim()||null, source:'manual',
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:720,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'집행 입력':'집행 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:13}}>
+          <div><label className="form-label">지출일 *</label>
+            <input type="date" value={f.spent_date} onChange={e=>set('spent_date',e.target.value)}/></div>
+          <div><label className="form-label">재원구분</label>
+            <select value={f.fund_type} onChange={e=>set('fund_type',e.target.value)}>
+              <option value="gov_support">정부지원금</option>
+              <option value="self_cash">자부담현금</option>
+              <option value="self_kind">자부담현물</option>
+            </select></div>
+          <div><label className="form-label">비목 *</label>
+            <select value={f.category} onChange={e=>set('category',e.target.value)}>
+              {CAT_OPTIONS.map(c=><option key={c} value={c}>{c}</option>)}
+            </select></div>
+          <div><label className="form-label">세목</label>
+            <input value={f.sub_category} onChange={e=>set('sub_category',e.target.value)} placeholder="예: 소모품비"/></div>
+          <div><label className="form-label">공급가액 (부가세 제외) *</label>
+            <MoneyInput value={f.amount_excl} onChange={v=>set('amount_excl',v)} placeholder="0"/></div>
+          <div><label className="form-label">부가세</label>
+            <MoneyInput value={f.amount_vat} onChange={v=>set('amount_vat',v)} placeholder="0"/></div>
+          <div><label className="form-label">합계금액 (자동)</label>
+            <div style={{padding:'9px 12px',background:'rgba(249,115,22,.08)',borderRadius:8,
+              border:'1px solid rgba(249,115,22,.2)',fontWeight:800,color:'var(--brand)'}}>{fmt(total)}원</div></div>
+          <div><label className="form-label">지급방법</label>
+            <select value={f.payment_method} onChange={e=>set('payment_method',e.target.value)}>
+              {PAY_METHODS.map(m=><option key={m} value={m}>{m}</option>)}
+            </select></div>
+          <div><label className="form-label">거래처</label>
+            <input value={f.vendor} onChange={e=>set('vendor',e.target.value)} placeholder="거래처명"/></div>
+          <div><label className="form-label">증빙 URL</label>
+            <input value={f.evidence_url} onChange={e=>set('evidence_url',e.target.value)} placeholder="https://drive.google.com/file/..."/></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">집행 목적 *</label>
+            <textarea value={f.purpose} onChange={e=>set('purpose',e.target.value)} rows={2} placeholder="사업 진행에 필요한 OO 구입"/></div>
+        </div>
+        {proj.evidence_folder_url && (
+          <div style={{marginTop:12,padding:'9px 14px',background:'rgba(59,130,246,.08)',border:'1px solid rgba(59,130,246,.2)',
+            borderRadius:8,fontSize:12,display:'flex',alignItems:'center',gap:8}}>
+            <i className="ti ti-folder" style={{color:'#3b82f6'}}/>
+            <span style={{color:'var(--text-sub)'}}>증빙 저장 위치:</span>
+            <a href={proj.evidence_folder_url} target="_blank" style={{color:'#3b82f6',fontWeight:600}}>증빙 폴더 열기 →</a>
+          </div>
+        )}
+        {err && <div style={{marginTop:12,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 집행 입력 관리 (수행·집행 탭 내용 2) ================= */
+function SpendManager({user,proj,showToast}){
+  const [rows,setRows] = useState(null);
+  const [modal,setModal] = useState(null);
+  const [fFund,setFFund] = useState('all');
+
+  async function load(){
+    const {data} = await sb.from('transactions').select('*').eq('project_id',proj.id).order('spent_date',{ascending:false});
+    setRows(data||[]);
+  }
+  useEffect(()=>{ load(); },[proj.id]);
+
+  const filtered = useMemo(()=>{
+    const list=rows||[];
+    return fFund==='all' ? list : list.filter(t=>t.fund_type===fFund);
+  },[rows,fFund]);
+
+  const sum = useMemo(()=>{
+    const list=rows||[];
+    return { total:list.reduce((s,t)=>s+n(t.amount_total),0),
+             gov:list.filter(t=>t.fund_type==='gov_support').reduce((s,t)=>s+n(t.amount_total),0),
+             cash:list.filter(t=>t.fund_type==='self_cash').reduce((s,t)=>s+n(t.amount_total),0),
+             kind:list.filter(t=>t.fund_type==='self_kind').reduce((s,t)=>s+n(t.amount_total),0) };
+  },[rows]);
+
+  async function saveTx(payload){
+    if(modal==='new'){
+      const {error} = await sb.from('transactions').insert({...payload, project_id:proj.id, created_by:user?.email||null});
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('집행이 등록되었습니다');
+    }else{
+      const {error} = await sb.from('transactions').update(payload).eq('id',modal.id);
+      if(error){ showToast('저장 실패: '+error.message,'err'); return; }
+      showToast('수정되었습니다');
+    }
+    setModal(null); load();
+  }
+  async function delTx(t){
+    if(!confirm(`집행 "${t.purpose||t.category}"을(를) 삭제하시겠습니까?`)) return;
+    const {error} = await sb.from('transactions').delete().eq('id',t.id);
+    if(error){ showToast('삭제 실패: '+error.message,'err'); return; }
+    showToast('삭제되었습니다'); load();
+  }
+
+  const FundBadge = ({t}) => <span className={"badge b-"+(t==='gov_support'?'신청':t==='self_kind'?'완료':'준비')}>{FUND_LABEL[t]||t}</span>;
+
+  return (
+    <div>
+      <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+        justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+        <div style={{fontSize:13,color:'var(--text-sub)'}}>
+          <i className="ti ti-info-circle" style={{color:'var(--brand)',marginRight:6}}/>
+          실제 집행(지출) 내역을 등록합니다. 인건비는 다음 단계에서 참여율 기반 자동계상도 가능합니다.
+        </div>
+        <button className="btn btn-brand btn-sm" onClick={()=>setModal('new')}><i className="ti ti-plus"/> 집행 입력</button>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:16}}>
+        <div className="card" style={{padding:'14px 16px'}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>총 집행액</div>
+          <div style={{fontSize:16,fontWeight:800,color:'var(--brand)'}}>{fmt(sum.total)}원</div></div>
+        <div className="card" style={{padding:'14px 16px'}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>정부지원금</div>
+          <div style={{fontSize:16,fontWeight:800}}>{fmt(sum.gov)}원</div></div>
+        <div className="card" style={{padding:'14px 16px'}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>자부담현금</div>
+          <div style={{fontSize:16,fontWeight:800}}>{fmt(sum.cash)}원</div></div>
+        <div className="card" style={{padding:'14px 16px'}}>
+          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4}}>자부담현물</div>
+          <div style={{fontSize:16,fontWeight:800}}>{fmt(sum.kind)}원</div></div>
+      </div>
+
+      <div className="card" style={{overflow:'hidden'}}>
+        <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',
+          justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:14,fontWeight:700}}>집행 내역 · {(rows||[]).length}건</span>
+          <select value={fFund} onChange={e=>setFFund(e.target.value)} style={{width:160}}>
+            <option value="all">전체 재원</option>
+            <option value="gov_support">정부지원금</option>
+            <option value="self_cash">자부담현금</option>
+            <option value="self_kind">자부담현물</option>
+          </select>
+        </div>
+
+        {rows===null ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : filtered.length===0 ? (
+          <div style={{padding:'44px 24px',textAlign:'center'}}>
+            <i className="ti ti-receipt-off" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>집행 내역이 없습니다</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>"집행 입력"으로 등록하세요.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl" style={{minWidth:860}}>
+              <thead><tr>
+                <th>지출일</th><th>비목/세목</th><th style={{textAlign:'center'}}>재원</th>
+                <th style={{textAlign:'right'}}>공급가액</th><th style={{textAlign:'right'}}>부가세</th>
+                <th style={{textAlign:'right'}}>합계</th><th>거래처</th>
+                <th style={{textAlign:'center'}}>증빙</th><th style={{textAlign:'center'}}>관리</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(t=>(
+                  <tr key={t.id}>
+                    <td style={{fontSize:12,whiteSpace:'nowrap'}}>{t.spent_date||'—'}
+                      {t.source==='auto_labor' && <span className="badge b-신청" style={{marginLeft:5,fontSize:9}}>자동</span>}</td>
+                    <td><div style={{fontWeight:600,fontSize:13}}>{t.category}</div>
+                      {t.sub_category && <div style={{fontSize:11,color:'var(--text-muted)'}}>{t.sub_category}</div>}
+                      {t.purpose && <div style={{fontSize:11,color:'var(--text-sub)',marginTop:2}}>{t.purpose}</div>}</td>
+                    <td style={{textAlign:'center'}}><FundBadge t={t.fund_type}/></td>
+                    <td style={{textAlign:'right'}}>{fmt(t.amount_excl)}</td>
+                    <td style={{textAlign:'right',color:'var(--text-sub)'}}>{fmt(t.amount_vat)}</td>
+                    <td style={{textAlign:'right',fontWeight:700}}>{fmt(t.amount_total)}</td>
+                    <td style={{fontSize:12,color:'var(--text-sub)'}}>{t.vendor||'—'}</td>
+                    <td style={{textAlign:'center'}}>{t.evidence_url?<a href={t.evidence_url} target="_blank" style={{color:'var(--brand)'}}><i className="ti ti-file-text"/></a>:<span style={{color:'#cbd5e1'}}>—</span>}</td>
+                    <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                      <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal(t)}><i className="ti ti-pencil"/></button>
+                      <button className="btn btn-ghost btn-sm" onClick={()=>delTx(t)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modal && <TxModal proj={proj} tx={modal==='new'?null:modal} onClose={()=>setModal(null)} onSave={saveTx}/>}
+    </div>
+  );
+}
+
+/* ================= 인건비 자동계상 (수행·집행 탭 내용 3) ================= */
+function LaborAutoCalc({user,proj,showToast}){
+  const months = useMemo(()=>ymList(proj.period_start,proj.period_end),[proj.id]);
+  const [ym,setYm] = useState(months[0]||'');
+  const [emps,setEmps] = useState([]);
+  const [allocs,setAllocs] = useState([]);
+  const [ratesByAlloc,setRatesByAlloc] = useState({});
+  const [existing,setExisting] = useState([]); // 이미 계상된 auto_labor tx (해당 월)
+  const [busy,setBusy] = useState(false);
+  const [loading,setLoading] = useState(true);
+
+  useEffect(()=>{ if(!ym && months.length) setYm(months[0]); },[months]);
+
+  async function loadBase(){
+    setLoading(true);
+    const [{data:e},{data:a}] = await Promise.all([
+      sb.from('employees').select('*'),
+      sb.from('staff_allocations').select('*').eq('project_id',proj.id),
+    ]);
+    setEmps(e||[]); setAllocs(a||[]);
+    const ids=(a||[]).map(x=>x.id);
+    if(ids.length){
+      const {data:r} = await sb.from('staff_rates').select('*').in('allocation_id',ids);
+      const map={}; (r||[]).forEach(row=>{ (map[row.allocation_id]=map[row.allocation_id]||{})[row.ym]=Number(row.rate)||0; });
+      setRatesByAlloc(map);
+    } else setRatesByAlloc({});
+    setLoading(false);
+  }
+  useEffect(()=>{ loadBase(); },[proj.id]);
+
+  async function loadExisting(){
+    if(!ym) return;
+    const {data} = await sb.from('transactions').select('*')
+      .eq('project_id',proj.id).eq('source','auto_labor').eq('spent_date',ym+'-27');
+    setExisting(data||[]);
+  }
+  useEffect(()=>{ loadExisting(); },[ym,proj.id]);
+
+  const empById = id => emps.find(e=>String(e.id)===String(id));
+
+  // 선택 월 계상 대상
+  const preview = useMemo(()=>{
+    if(!ym) return [];
+    return allocs.map(a=>{
+      const emp=empById(a.employee_id); if(!emp) return null;
+      const rate=(ratesByAlloc[a.id]||{})[ym]||0;
+      if(rate<=0) return null;
+      const salary=Number(emp.monthly_salary)||0;
+      return { alloc:a, emp, rate, fund_type:a.fund_type, amount:Math.round(salary*rate) };
+    }).filter(Boolean);
+  },[allocs,ratesByAlloc,ym,emps]);
+
+  const totalAmt = preview.reduce((s,r)=>s+r.amount,0);
+
+  async function run(){
+    if(!ym){ showToast('월을 선택하세요','err'); return; }
+    if(preview.length===0){ showToast('이 달에 계상할 인력이 없습니다','err'); return; }
+    if(existing.length>0 && !confirm(`${ym}에 이미 자동계상된 인건비 ${existing.length}건이 있습니다.\n기존 자동계상분을 지우고 다시 계상할까요?`)) return;
+    setBusy(true);
+    // 기존 auto_labor(해당 월) 삭제 후 재생성
+    await sb.from('transactions').delete().eq('project_id',proj.id).eq('source','auto_labor').eq('spent_date',ym+'-27');
+    const ins = preview.map(r=>({
+      project_id:proj.id, employee_id:r.emp.id, spent_date:ym+'-27',
+      category:'인건비', sub_category:r.emp.name,
+      amount_excl:r.amount, amount_vat:0, amount_total:r.amount,
+      fund_type:r.fund_type, payment_method:'계좌이체', vendor:null,
+      purpose:`${r.emp.name} ${ym} 인건비 (${Math.round(r.rate*100)}%)`,
+      source:'auto_labor', created_by:user?.email||null,
+    }));
+    const {error} = await sb.from('transactions').insert(ins);
+    setBusy(false);
+    if(error){ showToast('계상 실패: '+error.message,'err'); return; }
+    audit(user,'AUTO_LABOR',proj.id,`${ym} 인건비 ${ins.length}건 / ${fmt(totalAmt)}`);
+    showToast(`${ym} 인건비 ${ins.length}건이 집행에 반영되었습니다`);
+    loadExisting();
+  }
+
+  return (
+    <div>
+      <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+        justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+        <div style={{fontSize:13,color:'var(--text-sub)'}}>
+          <i className="ti ti-info-circle" style={{color:'var(--brand)',marginRight:6}}/>
+          인력 배정의 월별 참여율을 바탕으로 인건비를 집행 내역으로 자동 생성합니다. (금액 = 직원 월급 × 참여율)
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <select value={ym} onChange={e=>setYm(e.target.value)} style={{width:130}}>
+            {months.length===0 && <option value="">협약기간 없음</option>}
+            {months.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <button className="btn btn-brand btn-sm" onClick={run} disabled={busy||!ym}>
+            <i className="ti ti-calculator"/> {busy?'계상 중...':'이 달 인건비 계상'}
+          </button>
+        </div>
+      </div>
+
+      {existing.length>0 && (
+        <div className="card" style={{padding:'10px 16px',marginBottom:16,fontSize:12,
+          background:'rgba(16,185,129,.06)',borderLeft:'3px solid #10b981',color:'var(--text-sub)'}}>
+          <i className="ti ti-circle-check" style={{color:'#10b981',marginRight:6}}/>
+          {ym}은(는) 이미 <b>{existing.length}건</b> 계상되어 집행 내역에 있습니다. 다시 실행하면 갱신됩니다.
+        </div>
+      )}
+
+      <div className="card" style={{overflow:'hidden'}}>
+        <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',
+          justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:14,fontWeight:700}}>{ym||'—'} 계상 미리보기 · {preview.length}명</span>
+          <span style={{fontSize:14,fontWeight:800,color:'var(--brand)'}}>합계 {fmt(totalAmt)}원</span>
+        </div>
+        {loading ? (
+          <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+        ) : preview.length===0 ? (
+          <div style={{padding:'40px 24px',textAlign:'center'}}>
+            <i className="ti ti-user-dollar" style={{fontSize:36,color:'#cbd5e1'}}/>
+            <div style={{fontWeight:700,marginTop:12}}>이 달에 계상할 인력이 없습니다</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginTop:6}}>인력 배정에서 이 달 참여율을 입력했는지 확인하세요.</div>
+          </div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr>
+                <th>직원</th><th style={{textAlign:'center'}}>재원</th>
+                <th style={{textAlign:'right'}}>월급</th>
+                <th style={{textAlign:'center'}}>참여율</th>
+                <th style={{textAlign:'right'}}>계상액</th>
+              </tr></thead>
+              <tbody>
+                {preview.map((r,i)=>(
+                  <tr key={i}>
+                    <td style={{fontWeight:700}}>{r.emp.name}</td>
+                    <td style={{textAlign:'center'}}><span className="badge b-신청">{FUND_LABEL[r.fund_type]||r.fund_type}</span></td>
+                    <td style={{textAlign:'right',color:'var(--text-sub)'}}>{fmt(r.emp.monthly_salary)}</td>
+                    <td style={{textAlign:'center'}}>{Math.round(r.rate*100)}%</td>
+                    <td style={{textAlign:'right',fontWeight:700}}>{fmt(r.amount)}원</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:10}}>
+        계상 실행 시 이 내역이 [집행 입력] 목록에 "자동" 표시로 추가됩니다. 같은 달을 다시 실행하면 기존 자동계상분을 갱신합니다(수동 입력분은 그대로).
+      </div>
+    </div>
+  );
+}
+
+/* ================= 현물: 장비 모달 ================= */
+function EquipmentModal({equip,onClose,onSave}){
+  const isNew=!equip;
+  const [f,setF]=useState({
+    name:equip?.name||'', type:equip?.type||'', acquired_date:equip?.acquired_date||'',
+    cost:equip?.cost||'', life_years:equip?.life_years||'5', ratio_pct:equip?.ratio_pct||'',
+    use_months:equip?.use_months||'', expire_date:equip?.expire_date||'',
+    dup_flag:equip?.dup_flag||'', evidence_note:equip?.evidence_note||'',
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const cost=n(f.cost), ratio=parseFloat(f.ratio_pct)||0, months=parseFloat(f.use_months)||0, life=parseFloat(f.life_years)||0;
+  const amount=(cost>0&&ratio>0&&months>0&&life>0)?Math.round(cost*(ratio/100)*(months/(life*12))):0;
+
+  async function go(){
+    if(!f.name.trim()){ setErr('장비명을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      name:f.name.trim(), type:f.type.trim()||null, acquired_date:f.acquired_date||null,
+      cost:cost, life_years:parseInt(f.life_years)||null, ratio_pct:ratio, use_months:parseInt(f.use_months)||0,
+      kind_amount:amount, expire_date:f.expire_date||null, dup_flag:f.dup_flag||null, evidence_note:f.evidence_note.trim()||null,
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:700,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'장비 현물 추가':'장비 현물 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:13}}>
+          <div><label className="form-label">장비명 *</label>
+            <input value={f.name} onChange={e=>set('name',e.target.value)} placeholder="예: HP Z6 워크스테이션"/></div>
+          <div><label className="form-label">유형</label>
+            <input value={f.type} onChange={e=>set('type',e.target.value)} placeholder="예: 서버, PC, 분석장비"/></div>
+          <div><label className="form-label">취득일</label>
+            <input type="date" value={f.acquired_date} onChange={e=>set('acquired_date',e.target.value)}/></div>
+          <div><label className="form-label">취득가</label>
+            <MoneyInput value={f.cost} onChange={v=>set('cost',v)} placeholder="0"/></div>
+          <div><label className="form-label">내구연한(년)</label>
+            <input inputMode="numeric" value={f.life_years} onChange={e=>set('life_years',e.target.value.replace(/[^0-9]/g,''))} placeholder="5"/></div>
+          <div><label className="form-label">현물 비율(%)</label>
+            <input inputMode="numeric" value={f.ratio_pct} onChange={e=>set('ratio_pct',e.target.value.replace(/[^0-9.]/g,''))} placeholder="0~100"/></div>
+          <div><label className="form-label">사용 개월수</label>
+            <input inputMode="numeric" value={f.use_months} onChange={e=>set('use_months',e.target.value.replace(/[^0-9]/g,''))} placeholder="과제 기간 중 사용"/></div>
+          <div><label className="form-label">현물금액 (자동)</label>
+            <div style={{padding:'9px 12px',background:'rgba(139,92,246,.08)',borderRadius:8,
+              border:'1px solid rgba(139,92,246,.2)',fontWeight:800,color:'#7c3aed'}}>{fmt(amount)}원</div></div>
+          <div><label className="form-label">사용 만료일</label>
+            <input type="date" value={f.expire_date} onChange={e=>set('expire_date',e.target.value)}/></div>
+          <div><label className="form-label">중복 표시</label>
+            <select value={f.dup_flag} onChange={e=>set('dup_flag',e.target.value)}>
+              <option value="">정상</option>
+              <option value="중복">중복 (이전 사업 재계상)</option>
+            </select></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">증빙 메모</label>
+            <input value={f.evidence_note} onChange={e=>set('evidence_note',e.target.value)} placeholder="구입증빙 위치 등"/></div>
+        </div>
+        <div style={{marginTop:12,padding:'10px 14px',background:'rgba(139,92,246,.05)',border:'1px solid rgba(139,92,246,.2)',
+          borderRadius:8,fontSize:11,color:'#7c3aed'}}>
+          <i className="ti ti-info-circle"/> 현물금액 = 취득가 × 현물비율 × (사용개월수 ÷ (내구연한×12))
+        </div>
+        {err && <div style={{marginTop:12,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 현물: 임차 모달 ================= */
+function monthCount(s,e){ if(!s||!e) return 0; const sd=new Date(s+'-01'),ed=new Date(e+'-01'); if(sd>ed) return 0;
+  return (ed.getFullYear()-sd.getFullYear())*12+(ed.getMonth()-sd.getMonth())+1; }
+function LeaseModal({lease,onClose,onSave}){
+  const isNew=!lease;
+  const [f,setF]=useState({
+    name:lease?.name||'', type:lease?.type||'', status:lease?.status||'active',
+    monthly_cost:lease?.monthly_cost||'', alloc_ratio:lease?.alloc_ratio||'',
+    start_month:lease?.start_month||'', end_month:lease?.end_month||'',
+    budget:lease?.budget||'', alloc_basis:lease?.alloc_basis||'', note:lease?.note||'',
+  });
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState('');
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const mc=n(f.monthly_cost), ratio=parseFloat(f.alloc_ratio)||0, months=monthCount(f.start_month,f.end_month);
+  const amount=Math.round(mc*ratio*months);
+
+  async function go(){
+    if(!f.name.trim()){ setErr('임차 항목명을 입력하세요.'); return; }
+    setBusy(true); setErr('');
+    await onSave({
+      name:f.name.trim(), type:f.type.trim()||null, status:f.status,
+      monthly_cost:mc, alloc_ratio:ratio, start_month:f.start_month||null, end_month:f.end_month||null,
+      total_amount:amount, budget:n(f.budget), alloc_basis:f.alloc_basis.trim()||null, note:f.note.trim()||null,
+    });
+    setBusy(false);
+  }
+
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="card" style={{width:'100%',maxWidth:700,padding:24}}
+        onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+          <div style={{fontSize:17,fontWeight:800}}>{isNew?'임차 현물 추가':'임차 현물 수정'}</div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:13}}>
+          <div><label className="form-label">임차 항목명 *</label>
+            <input value={f.name} onChange={e=>set('name',e.target.value)} placeholder="예: 연구실 임차료"/></div>
+          <div><label className="form-label">유형</label>
+            <input value={f.type} onChange={e=>set('type',e.target.value)} placeholder="예: 사무실, 장비 리스"/></div>
+          <div><label className="form-label">월 단가</label>
+            <MoneyInput value={f.monthly_cost} onChange={v=>set('monthly_cost',v)} placeholder="0"/></div>
+          <div><label className="form-label">배분율 (0~1)</label>
+            <input inputMode="decimal" value={f.alloc_ratio} onChange={e=>set('alloc_ratio',e.target.value.replace(/[^0-9.]/g,''))} placeholder="예: 0.3"/></div>
+          <div><label className="form-label">시작월</label>
+            <input type="month" value={f.start_month} onChange={e=>set('start_month',e.target.value)}/></div>
+          <div><label className="form-label">종료월</label>
+            <input type="month" value={f.end_month} onChange={e=>set('end_month',e.target.value)}/></div>
+          <div><label className="form-label">현물합계 (자동) · {months}개월</label>
+            <div style={{padding:'9px 12px',background:'rgba(20,184,166,.08)',borderRadius:8,
+              border:'1px solid rgba(20,184,166,.2)',fontWeight:800,color:'#0d9488'}}>{fmt(amount)}원</div></div>
+          <div><label className="form-label">예산</label>
+            <MoneyInput value={f.budget} onChange={v=>set('budget',v)} placeholder="0"/></div>
+          <div><label className="form-label">상태</label>
+            <select value={f.status} onChange={e=>set('status',e.target.value)}>
+              <option value="active">활성</option><option value="closed">종료</option>
+            </select></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">배분 근거</label>
+            <input value={f.alloc_basis} onChange={e=>set('alloc_basis',e.target.value)} placeholder="예: 면적 비율, 참여인력 비율"/></div>
+          <div style={{gridColumn:'1 / span 2'}}><label className="form-label">비고</label>
+            <textarea value={f.note} onChange={e=>set('note',e.target.value)} rows={2}/></div>
+        </div>
+        <div style={{marginTop:12,padding:'10px 14px',background:'rgba(20,184,166,.05)',border:'1px solid rgba(20,184,166,.2)',
+          borderRadius:8,fontSize:11,color:'#0d9488'}}>
+          <i className="ti ti-info-circle"/> 현물합계 = 월단가 × 배분율 × 개월수
+        </div>
+        {err && <div style={{marginTop:12,padding:'10px 14px',borderRadius:8,fontSize:13,background:'rgba(239,68,68,.1)',color:'#ef4444'}}>{err}</div>}
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:16}}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={busy}>취소</button>
+          <button className="btn btn-brand" onClick={go} disabled={busy}>{busy?'저장 중...':'저장'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= 현물 관리 (수행·집행 탭 내용 4) ================= */
+function InkindManager({user,proj,showToast}){
+  const [kind,setKind] = useState('equip'); // equip/lease
+  const [eqs,setEqs]   = useState(null);
+  const [lss,setLss]   = useState(null);
+  const [modal,setModal] = useState(null); // {type:'equip'|'lease', item} | {type, item:'new'}
+
+  async function load(){
+    const [{data:e},{data:l}] = await Promise.all([
+      sb.from('equipment').select('*').eq('project_id',proj.id).order('id'),
+      sb.from('leases').select('*').eq('project_id',proj.id).order('id'),
+    ]);
+    setEqs(e||[]); setLss(l||[]);
+  }
+  useEffect(()=>{ load(); },[proj.id]);
+
+  const eqTotal=(eqs||[]).reduce((s,x)=>s+n(x.kind_amount),0);
+  const lsTotal=(lss||[]).reduce((s,x)=>s+n(x.total_amount),0);
+
+  async function saveEquip(payload){
+    const isNew = modal.item==='new';
+    const res = isNew
+      ? await sb.from('equipment').insert({...payload,project_id:proj.id})
+      : await sb.from('equipment').update(payload).eq('id',modal.item.id);
+    if(res.error){ showToast('저장 실패: '+res.error.message,'err'); return; }
+    showToast(isNew?'장비가 추가되었습니다':'수정되었습니다'); setModal(null); load();
+  }
+  async function saveLease(payload){
+    const isNew = modal.item==='new';
+    const res = isNew
+      ? await sb.from('leases').insert({...payload,project_id:proj.id})
+      : await sb.from('leases').update(payload).eq('id',modal.item.id);
+    if(res.error){ showToast('저장 실패: '+res.error.message,'err'); return; }
+    showToast(isNew?'임차가 추가되었습니다':'수정되었습니다'); setModal(null); load();
+  }
+  async function delItem(table,id){
+    if(!confirm('삭제하시겠습니까?')) return;
+    const {error} = await sb.from(table).delete().eq('id',id);
+    if(error){ showToast('삭제 실패: '+error.message,'err'); return; }
+    showToast('삭제되었습니다'); load();
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        <button className={"btn btn-sm "+(kind==='equip'?'btn-brand':'btn-ghost')} onClick={()=>setKind('equip')}>
+          <i className="ti ti-device-desktop"/> 장비 현물</button>
+        <button className={"btn btn-sm "+(kind==='lease'?'btn-brand':'btn-ghost')} onClick={()=>setKind('lease')}>
+          <i className="ti ti-building"/> 임차 현물</button>
+      </div>
+
+      {kind==='equip' ? (
+        <div>
+          <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+            justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+            <div style={{fontSize:13,color:'var(--text-sub)'}}>
+              장비 현물 합계: <b style={{color:'#7c3aed'}}>{fmt(eqTotal)}원</b>
+            </div>
+            <button className="btn btn-brand btn-sm" onClick={()=>setModal({type:'equip',item:'new'})}><i className="ti ti-plus"/> 장비 추가</button>
+          </div>
+          <div className="card" style={{overflow:'hidden'}}>
+            {eqs===null ? <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+            : eqs.length===0 ? (
+              <div style={{padding:'44px 24px',textAlign:'center'}}>
+                <i className="ti ti-device-desktop-off" style={{fontSize:36,color:'#cbd5e1'}}/>
+                <div style={{fontWeight:700,marginTop:12}}>등록된 장비 현물이 없습니다</div>
+              </div>
+            ) : (
+              <div style={{overflowX:'auto'}}>
+                <table className="tbl" style={{minWidth:820}}>
+                  <thead><tr><th>장비명</th><th>유형</th><th style={{textAlign:'right'}}>취득가</th>
+                    <th style={{textAlign:'center'}}>내구연한</th><th style={{textAlign:'center'}}>현물비율</th>
+                    <th style={{textAlign:'center'}}>사용개월</th><th style={{textAlign:'right'}}>현물금액</th>
+                    <th style={{textAlign:'center'}}>관리</th></tr></thead>
+                  <tbody>
+                    {eqs.map(x=>(
+                      <tr key={x.id}>
+                        <td style={{fontWeight:700}}>{x.name}{x.dup_flag==='중복' && <span className="badge b-탈락" style={{marginLeft:6,fontSize:9}}>중복</span>}</td>
+                        <td style={{fontSize:12,color:'var(--text-sub)'}}>{x.type||'—'}</td>
+                        <td style={{textAlign:'right'}}>{fmt(x.cost)}</td>
+                        <td style={{textAlign:'center'}}>{x.life_years||'—'}년</td>
+                        <td style={{textAlign:'center'}}>{x.ratio_pct||0}%</td>
+                        <td style={{textAlign:'center'}}>{x.use_months||0}개월</td>
+                        <td style={{textAlign:'right',fontWeight:700,color:'#7c3aed'}}>{fmt(x.kind_amount)}</td>
+                        <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                          <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal({type:'equip',item:x})}><i className="ti ti-pencil"/></button>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>delItem('equipment',x.id)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div className="card" style={{padding:'14px 18px',marginBottom:16,display:'flex',
+            justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+            <div style={{fontSize:13,color:'var(--text-sub)'}}>
+              임차 현물 합계: <b style={{color:'#0d9488'}}>{fmt(lsTotal)}원</b>
+            </div>
+            <button className="btn btn-brand btn-sm" onClick={()=>setModal({type:'lease',item:'new'})}><i className="ti ti-plus"/> 임차 추가</button>
+          </div>
+          <div className="card" style={{overflow:'hidden'}}>
+            {lss===null ? <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>
+            : lss.length===0 ? (
+              <div style={{padding:'44px 24px',textAlign:'center'}}>
+                <i className="ti ti-building" style={{fontSize:36,color:'#cbd5e1'}}/>
+                <div style={{fontWeight:700,marginTop:12}}>등록된 임차 현물이 없습니다</div>
+              </div>
+            ) : (
+              <div style={{overflowX:'auto'}}>
+                <table className="tbl" style={{minWidth:820}}>
+                  <thead><tr><th>항목명</th><th style={{textAlign:'right'}}>월단가</th>
+                    <th style={{textAlign:'center'}}>배분율</th><th style={{textAlign:'center'}}>기간</th>
+                    <th style={{textAlign:'right'}}>현물합계</th><th style={{textAlign:'center'}}>상태</th>
+                    <th style={{textAlign:'center'}}>관리</th></tr></thead>
+                  <tbody>
+                    {lss.map(x=>(
+                      <tr key={x.id}>
+                        <td style={{fontWeight:700}}>{x.name}
+                          {x.alloc_basis && <div style={{fontSize:11,color:'var(--text-muted)'}}>{x.alloc_basis}</div>}</td>
+                        <td style={{textAlign:'right'}}>{fmt(x.monthly_cost)}</td>
+                        <td style={{textAlign:'center'}}>{x.alloc_ratio||0}</td>
+                        <td style={{textAlign:'center',fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>{x.start_month||'—'}~{x.end_month||'—'}</td>
+                        <td style={{textAlign:'right',fontWeight:700,color:'#0d9488'}}>{fmt(x.total_amount)}</td>
+                        <td style={{textAlign:'center'}}><span className={"badge b-"+(x.status==='closed'?'탈락':'수행')}>{x.status==='closed'?'종료':'활성'}</span></td>
+                        <td style={{textAlign:'center',whiteSpace:'nowrap'}}>
+                          <button className="btn btn-ghost btn-sm" style={{marginRight:5}} onClick={()=>setModal({type:'lease',item:x})}><i className="ti ti-pencil"/></button>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>delItem('leases',x.id)} style={{color:'#ef4444'}}><i className="ti ti-trash"/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {modal?.type==='equip' && <EquipmentModal equip={modal.item==='new'?null:modal.item} onClose={()=>setModal(null)} onSave={saveEquip}/>}
+      {modal?.type==='lease' && <LeaseModal lease={modal.item==='new'?null:modal.item} onClose={()=>setModal(null)} onSave={saveLease}/>}
+    </div>
+  );
+}
+
+/* ================= 정산·보고 (마지막 탭) ================= */
+function SettleView({user,proj,showToast}){
+  const [txs,setTxs]   = useState(null);
+  const [cats,setCats] = useState([]);
+  const [years,setYears] = useState([]);
+
+  async function load(){
+    const [{data:t},{data:c},{data:y}] = await Promise.all([
+      sb.from('transactions').select('*').eq('project_id',proj.id),
+      sb.from('categories').select('*').eq('project_id',proj.id),
+      sb.from('project_years').select('*').eq('project_id',proj.id).order('year_no'),
+    ]);
+    setTxs(t||[]); setCats(c||[]); setYears(y||[]);
+  }
+  useEffect(()=>{ load(); },[proj.id]);
+
+  // 예산 (과제 기준)
+  const budget = { gov:n(proj.govt_budget), cash:n(proj.cash_budget), kind:n(proj.kind_budget), total:n(proj.total_budget) };
+  // 집행 (재원별)
+  const spent = useMemo(()=>{
+    const list=txs||[];
+    const gov=list.filter(t=>t.fund_type==='gov_support').reduce((s,t)=>s+n(t.amount_total),0);
+    const cash=list.filter(t=>t.fund_type==='self_cash').reduce((s,t)=>s+n(t.amount_total),0);
+    const kind=list.filter(t=>t.fund_type==='self_kind').reduce((s,t)=>s+n(t.amount_total),0);
+    return { gov, cash, kind, total:gov+cash+kind };
+  },[txs]);
+
+  // 비목별 집행
+  const byCat = useMemo(()=>{
+    const map={};
+    (txs||[]).forEach(t=>{ const k=t.category||'기타'; map[k]=(map[k]||0)+n(t.amount_total); });
+    // 비목 예산도 매핑
+    const budMap={};
+    cats.forEach(c=>{ const k=c.category||'기타'; budMap[k]=(budMap[k]||0)+n(c.budget_total); });
+    const keys=[...new Set([...Object.keys(map),...Object.keys(budMap)])];
+    return keys.map(k=>({cat:k, spent:map[k]||0, budget:budMap[k]||0})).sort((a,b)=>b.spent-a.spent);
+  },[txs,cats]);
+
+  const pct = (a,b) => b>0 ? Math.round(a/b*1000)/10 : 0;
+
+  // 엑셀 내보내기 (집행 내역 + 요약)
+  function exportExcel(){
+    if(typeof XLSX==='undefined'){ showToast('엑셀 라이브러리 로딩 중입니다. 잠시 후 다시 시도하세요','err'); return; }
+    const FUND={gov_support:'정부지원금',self_cash:'자부담현금',self_kind:'자부담현물'};
+    const wb = XLSX.utils.book_new();
+
+    // 시트1: 집행 내역
+    const txRows = (txs||[]).slice().sort((a,b)=>String(a.spent_date||'').localeCompare(String(b.spent_date||''))).map(t=>({
+      '지출일':t.spent_date||'', '비목':t.category||'', '세목':t.sub_category||'',
+      '재원':FUND[t.fund_type]||t.fund_type||'', '공급가액':n(t.amount_excl), '부가세':n(t.amount_vat),
+      '합계':n(t.amount_total), '지급방법':t.payment_method||'', '거래처':t.vendor||'',
+      '집행목적':t.purpose||'', '구분':t.source==='auto_labor'?'자동(인건비)':'수동', '증빙URL':t.evidence_url||'',
+    }));
+    const ws1 = XLSX.utils.json_to_sheet(txRows.length?txRows:[{'지출일':'(집행 내역 없음)'}]);
+    XLSX.utils.book_append_sheet(wb, ws1, '집행내역');
+
+    // 시트2: 재원별 요약
+    const sum2 = [
+      {'구분':'정부지원금','예산':budget.gov,'집행':spent.gov,'잔액':budget.gov-spent.gov,'집행률(%)':pct(spent.gov,budget.gov)},
+      {'구분':'자부담현금','예산':budget.cash,'집행':spent.cash,'잔액':budget.cash-spent.cash,'집행률(%)':pct(spent.cash,budget.cash)},
+      {'구분':'자부담현물','예산':budget.kind,'집행':spent.kind,'잔액':budget.kind-spent.kind,'집행률(%)':pct(spent.kind,budget.kind)},
+      {'구분':'합계','예산':budget.total,'집행':spent.total,'잔액':budget.total-spent.total,'집행률(%)':pct(spent.total,budget.total)},
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sum2), '재원별요약');
+
+    // 시트3: 비목별 요약
+    const cat3 = byCat.map(r=>({'비목':r.cat,'예산':r.budget,'집행':r.spent,'잔액':r.budget-r.spent,'집행률(%)':pct(r.spent,r.budget)}));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cat3.length?cat3:[{'비목':'(없음)'}]), '비목별요약');
+
+    const safe=(proj.name||'과제').replace(/[\\/:*?"<>|]/g,'_');
+    XLSX.writeFile(wb, `${safe}_정산_${new Date().toISOString().slice(0,10)}.xlsx`);
+    audit(user,'EXPORT_EXCEL',proj.id,'정산 엑셀');
+    showToast('엑셀 파일을 다운로드했습니다');
+  }
+
+
+  const Bar = ({value,max,color}) => {
+    const w = max>0 ? Math.min(100, value/max*100) : 0;
+    return <div style={{height:8,background:'#f1f5f9',borderRadius:4,overflow:'hidden'}}>
+      <div style={{width:w+'%',height:'100%',background:color,borderRadius:4}}/></div>;
+  };
+
+  const FundRow = ({label,bud,sp,color}) => {
+    const p=pct(sp,bud); const remain=bud-sp;
+    return (
+      <div style={{marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+          <span style={{fontSize:13,fontWeight:600}}>{label}</span>
+          <span style={{fontSize:12,color:'var(--text-sub)'}}>
+            {fmt(sp)} / {fmt(bud)}원 · <b style={{color:p>100?'#ef4444':color}}>{p}%</b>
+          </span>
+        </div>
+        <Bar value={sp} max={bud} color={p>100?'#ef4444':color}/>
+        <div style={{fontSize:11,color:remain<0?'#ef4444':'var(--text-muted)',marginTop:4}}>
+          잔액 {fmt(remain)}원 {remain<0?'(초과)':''}
+        </div>
+      </div>
+    );
+  };
+
+  if(txs===null) return <div style={{padding:40,display:'flex',justifyContent:'center'}}><div className="spinner"/></div>;
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginBottom:16}}>
+        <button className="btn btn-ghost btn-sm" onClick={exportExcel}>
+          <i className="ti ti-file-spreadsheet"/> 엑셀 내보내기
+        </button>
+      </div>
+      {/* 총괄 KPI */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:18}}>
+        <div className="kpi"><div style={{fontSize:12,color:'var(--text-sub)',fontWeight:600,marginBottom:8}}>총 예산</div>
+          <div style={{fontSize:22,fontWeight:800}}>{fmt(budget.total)}<span style={{fontSize:13}}>원</span></div></div>
+        <div className="kpi"><div style={{fontSize:12,color:'var(--text-sub)',fontWeight:600,marginBottom:8}}>총 집행</div>
+          <div style={{fontSize:22,fontWeight:800}}>{fmt(spent.total)}<span style={{fontSize:13}}>원</span></div></div>
+        <div className="kpi"><div style={{fontSize:12,color:'var(--text-sub)',fontWeight:600,marginBottom:8}}>집행률</div>
+          <div style={{fontSize:22,fontWeight:800,color:pct(spent.total,budget.total)>100?'#ef4444':'var(--brand)'}}>{pct(spent.total,budget.total)}%</div></div>
+      </div>
+
+      {/* 재원별 집행 현황 */}
+      <div className="card" style={{padding:22,marginBottom:18}}>
+        <div style={{fontSize:15,fontWeight:800,marginBottom:18}}>재원별 집행 현황</div>
+        <FundRow label="정부지원금" bud={budget.gov} sp={spent.gov} color="#3b82f6"/>
+        <FundRow label="자부담현금" bud={budget.cash} sp={spent.cash} color="#f59e0b"/>
+        <FundRow label="자부담현물" bud={budget.kind} sp={spent.kind} color="#7c3aed"/>
+      </div>
+
+      {/* 비목별 집행 현황 */}
+      <div className="card" style={{overflow:'hidden',marginBottom:18}}>
+        <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',fontSize:14,fontWeight:700}}>비목별 집행 현황</div>
+        {byCat.length===0 ? (
+          <div style={{padding:'30px',textAlign:'center',fontSize:13,color:'var(--text-muted)'}}>집행 내역이 없습니다.</div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>비목</th><th style={{textAlign:'right'}}>예산</th>
+                <th style={{textAlign:'right'}}>집행</th><th style={{textAlign:'right'}}>잔액</th>
+                <th style={{textAlign:'center'}}>집행률</th></tr></thead>
+              <tbody>
+                {byCat.map(r=>{
+                  const p=pct(r.spent,r.budget); const remain=r.budget-r.spent;
+                  return (
+                    <tr key={r.cat}>
+                      <td style={{fontWeight:700}}>{r.cat}</td>
+                      <td style={{textAlign:'right'}}>{fmt(r.budget)}</td>
+                      <td style={{textAlign:'right',fontWeight:700}}>{fmt(r.spent)}</td>
+                      <td style={{textAlign:'right',color:remain<0?'#ef4444':'var(--text-sub)'}}>{fmt(remain)}</td>
+                      <td style={{textAlign:'center'}}>
+                        <span style={{fontWeight:700,color:r.budget===0?'var(--text-muted)':(p>100?'#ef4444':'#10b981')}}>
+                          {r.budget>0?p+'%':'—'}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 연차별 집행 현황 */}
+      {years.length>0 && (
+        <div className="card" style={{overflow:'hidden'}}>
+          <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',fontSize:14,fontWeight:700}}>연차별 예산 · 집행</div>
+          <div style={{overflowX:'auto'}}>
+            <table className="tbl">
+              <thead><tr><th>연차</th><th>기간</th>
+                <th style={{textAlign:'right'}}>예산</th><th style={{textAlign:'right'}}>집행</th>
+                <th style={{textAlign:'right'}}>잔액</th><th style={{textAlign:'center'}}>집행률</th></tr></thead>
+              <tbody>
+                {years.map(y=>{
+                  // 연차 기간 내 집행 합계 (spent_date 기준)
+                  const ys=String(y.start_date||''), ye=String(y.end_date||'');
+                  const sp=(txs||[]).filter(t=>{const d=String(t.spent_date||''); return ys&&ye&&d>=ys&&d<=ye;}).reduce((s,t)=>s+n(t.amount_total),0);
+                  const bud=n(y.total_budget); const p=pct(sp,bud); const remain=bud-sp;
+                  return (
+                    <tr key={y.id}>
+                      <td><span className="badge b-준비" style={{fontWeight:700}}>{y.year_label}</span></td>
+                      <td style={{fontSize:12,color:'var(--text-sub)',whiteSpace:'nowrap'}}>{y.start_date||'—'}~{y.end_date||'—'}</td>
+                      <td style={{textAlign:'right'}}>{fmt(bud)}</td>
+                      <td style={{textAlign:'right',fontWeight:700}}>{fmt(sp)}</td>
+                      <td style={{textAlign:'right',color:remain<0?'#ef4444':'var(--text-sub)'}}>{fmt(remain)}</td>
+                      <td style={{textAlign:'center'}}><span style={{fontWeight:700,color:bud===0?'var(--text-muted)':(p>100?'#ef4444':'#10b981')}}>{bud>0?p+'%':'—'}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================= 과제 상세 페이지 ================= */
 function ProjectDetail({user,project,onBack,showToast}){
   const [proj,setProj] = useState(project);
@@ -1317,15 +2180,18 @@ function ProjectDetail({user,project,onBack,showToast}){
               <i className="ti ti-users"/> 인력 배정</button>
             <button className={"btn btn-sm "+(execTab==='spend'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('spend')}>
               <i className="ti ti-receipt"/> 집행 입력</button>
+            <button className={"btn btn-sm "+(execTab==='labor'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('labor')}>
+              <i className="ti ti-user-dollar"/> 인건비 계상</button>
             <button className={"btn btn-sm "+(execTab==='inkind'?'btn-brand':'btn-ghost')} onClick={()=>setExecTab('inkind')}>
               <i className="ti ti-server"/> 현물</button>
           </div>
           {execTab==='staff'  && <StaffManager user={user} proj={proj} showToast={showToast}/>}
-          {execTab==='spend'  && placeholder('집행 입력','다음 단계에서 집행 내역 입력 · 인건비 자동계상이 추가됩니다.')}
-          {execTab==='inkind' && placeholder('현물','다음 단계에서 장비·임차 현물 관리가 추가됩니다.')}
+          {execTab==='spend'  && <SpendManager user={user} proj={proj} showToast={showToast}/>}
+          {execTab==='labor'  && <LaborAutoCalc user={user} proj={proj} showToast={showToast}/>}
+          {execTab==='inkind' && <InkindManager user={user} proj={proj} showToast={showToast}/>}
         </div>
       )}
-      {ptab==='settle'  && placeholder('Phase 4 · 정산·보고','연차별 집행률 · 잔액 · 증빙 점검 · 엑셀 내보내기가 추가됩니다.')}
+      {ptab==='settle'  && <SettleView user={user} proj={proj} showToast={showToast}/>}
 
       {modal && (
         <ProjectModal user={user} editItem={proj}
